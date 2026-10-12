@@ -659,6 +659,37 @@ def _find_wmplayer():
 	return shutil.which("wmplayer.exe") or shutil.which("wmplayer")
 
 
+def cleanup_temp_files():
+	"""Silently clean up stale temporary media, partial downloads, and cache files created by NV-SoftPlayer."""
+	try:
+		temp_dir = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "nvSoftPlayer")
+		if os.path.isdir(temp_dir):
+			for entry in os.listdir(temp_dir):
+				# Strictly preserve the bin folder containing executables and libraries
+				if entry.lower() == "bin":
+					continue
+				full_path = os.path.join(temp_dir, entry)
+				try:
+					if os.path.isfile(full_path):
+						os.remove(full_path)
+					elif os.path.isdir(full_path):
+						shutil.rmtree(full_path, ignore_errors=True)
+				except Exception:
+					pass
+		# Also clean temporary player host script if present in TEMP
+		host_tmp = os.path.join(
+			os.environ.get("TEMP", os.path.expanduser("~")),
+			"nvSoftPlayer_player_host.ps1",
+		)
+		if os.path.isfile(host_tmp):
+			try:
+				os.remove(host_tmp)
+			except Exception:
+				pass
+	except Exception:
+		pass
+
+
 def get_download_folder():
 	"""Return the NV-SoftPlayer folder inside the user's Music directory, creating it once if needed."""
 	music_dir = os.path.join(os.path.expanduser("~"), "Music")

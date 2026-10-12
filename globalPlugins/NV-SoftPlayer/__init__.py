@@ -35,6 +35,7 @@ from .common import (
 	PROVIDER_VALUES,
 	DEFAULT_IGNORE_WORDS,
 	_find_ytdlp,
+	cleanup_temp_files,
 )
 
 from .audioPlayer import (
@@ -163,6 +164,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._playerDialog = None
 		self._youtubeDialog = None
 		self._registerSettingsPanel()
+		# Clean stale temporary files in the background whenever NVDA starts/restarts
+		threading.Thread(
+			target=cleanup_temp_files, daemon=True, name="NVSoftPlayer-AutoCleanup"
+		).start()
 
 	def terminate(self):
 		self._unregisterSettingsPanel()
@@ -177,6 +182,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 					dlg.Destroy()
 			except Exception:
 				pass
+		# Also clean temporary files on shutdown/restart
+		try:
+			threading.Thread(
+				target=cleanup_temp_files, daemon=True, name="NVSoftPlayer-ExitCleanup"
+			).start()
+		except Exception:
+			pass
 		super().terminate()
 
 	def _registerSettingsPanel(self):

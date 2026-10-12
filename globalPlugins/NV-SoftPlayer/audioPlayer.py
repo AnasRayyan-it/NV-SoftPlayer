@@ -368,14 +368,25 @@ class ExternalWmpBackend:
 			target = duration
 		return self.seek(target), duration
 
+	def _post(self, payload):
+		if not self._proc or self._proc.poll() is not None:
+			return
+		line = json.dumps(payload, ensure_ascii=False) + "\n"
+		with self._lock:
+			try:
+				self._proc.stdin.write(line)
+				self._proc.stdin.flush()
+			except Exception:
+				pass
+
 	def get_volume(self):
 		v = self._last.get("vol")
 		return int(v) if v is not None else 100
 
 	def set_volume(self, value):
 		value = int(max(0, min(100, value)))
-		self._rpc({"cmd": "volume", "value": value})
 		self._last["vol"] = value
+		self._post({"cmd": "volume", "value": value})
 		return value
 
 	def is_playing(self):
@@ -702,6 +713,7 @@ class NVSoftPlayerDialog(wx.Dialog):
 		except Exception:
 			pass
 		self.status_label.SetLabel(f"Player volume {new_vol} percent")
+		ui.message(f"{new_vol}%")
 
 	def on_media_finished(self):
 		if self._closed or self._stop_requested or self._switching:

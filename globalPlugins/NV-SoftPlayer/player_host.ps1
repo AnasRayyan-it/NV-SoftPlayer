@@ -30,11 +30,27 @@ public static class PipeReader {
         return null;
     }
 }
-"@
-try {
-	Add-Type -TypeDefinition $src
-	[PipeReader]::Start()
-} catch {}
+$dllCandidates = @(
+	(Join-Path $PSScriptRoot "bin\PipeReader.dll"),
+	(Join-Path $PSScriptRoot "PipeReader.dll")
+)
+$loaded = $false
+foreach ($dll in $dllCandidates) {
+	if (Test-Path $dll) {
+		try {
+			Add-Type -Path $dll
+			[PipeReader]::Start()
+			$loaded = $true
+			break
+		} catch {}
+	}
+}
+if (-not $loaded) {
+	try {
+		Add-Type -TypeDefinition $src
+		[PipeReader]::Start()
+	} catch {}
+}
 
 $wmp = New-Object -ComObject WMPlayer.OCX
 try { $wmp.settings.autoStart = $false } catch {}
@@ -87,7 +103,6 @@ while ($running) {
 				}
 				'volume' {
 					$wmp.settings.volume = [int]$j.value
-					Write-Msg '{"ok":true}'
 				}
 				'query' {
 					$st = 1
@@ -116,7 +131,7 @@ while ($running) {
 			Write-Msg '{"ok":false,"error":"exception"}'
 		}
 	} else {
-		Start-Sleep -Milliseconds 25
+		Start-Sleep -Milliseconds 10
 	}
 }
 try { $wmp.close() } catch {}

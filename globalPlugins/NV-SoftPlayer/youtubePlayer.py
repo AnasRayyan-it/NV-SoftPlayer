@@ -110,7 +110,8 @@ def _run_ytdlp(args, timeout=60):
 
 YT_CLIENT_ARGS = [
 	"--extractor-args",
-	"youtube:player_client=android,ios,tv,web",
+	"youtube:player_client=android,web",
+	"--no-check-formats",
 ]
 YT_AUDIO_FORMAT = "140/139/bestaudio[ext=m4a]/ba[ext=m4a]/ba/18"
 YT_VIDEO_FORMAT = "18/22/17/best[ext=mp4][protocol^=https]/best[ext=mp4]/best"
