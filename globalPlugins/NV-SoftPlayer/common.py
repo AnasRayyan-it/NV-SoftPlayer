@@ -604,6 +604,12 @@ def _addon_bin_dirs():
 	here = _plugin_dir()
 	dirs.append(os.path.join(here, "bin"))
 	dirs.append(here)
+	local_app_data = os.environ.get("LOCALAPPDATA")
+	if local_app_data:
+		dirs.append(os.path.join(local_app_data, "NV-SoftPlayer", "bin"))
+	temp_dir = os.environ.get("TEMP")
+	if temp_dir:
+		dirs.append(os.path.join(temp_dir, "nvSoftPlayer", "bin"))
 	return dirs
 
 

@@ -1090,16 +1090,14 @@ class YouTubeDialog(wx.Dialog):
 
 
 def show_youtube_dialog(parent, plugin):
-	if not _find_ytdlp():
-		handle_error(
-			"yt-dlp was not found. Place the Windows x64 yt-dlp.exe "
-			"(not arm64) in globalPlugins/NV-SoftPlayer/bin/ then restart NVDA. "
-			"Download: https://github.com/yt-dlp/yt-dlp/releases/latest"
-		)
-		return None
-	gui.mainFrame.prePopup()
-	dlg = YouTubeDialog(parent, plugin)
-	dlg.Show()
-	dlg.Raise()
-	dlg.query_ctrl.SetFocus()
-	return dlg
+	from .dependencyManager import ensure_youtube_dependencies
+
+	def _open():
+		gui.mainFrame.prePopup()
+		dlg = YouTubeDialog(parent, plugin)
+		dlg.Show()
+		dlg.Raise()
+		dlg.query_ctrl.SetFocus()
+
+	ensure_youtube_dependencies(parent, _open)
+

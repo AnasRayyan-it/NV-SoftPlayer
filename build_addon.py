@@ -1,13 +1,16 @@
 # -*- coding: UTF-8 -*-
 """
-Build script to package the NV-SoftPlayer NVDA add-on into a .nvda-addon installer.
-Includes globalPlugins, manifest.ini, readme.txt, and bundled binaries (ffmpeg.exe, yt-dlp.exe).
+Build script to package the NV-SoftPlayer NVDA add-on.
+Creates lightweight .nvda-addon and .zip packages (approx 50 KB).
+External playback binaries (yt-dlp and ffmpeg) are automatically downloaded
+by the add-on on first run into the bin folder.
+Pass --bundle-binaries to bundle local executables if needed.
 """
 
 import os
 import sys
+import shutil
 import zipfile
-import re
 
 
 def parse_manifest(manifest_path):
@@ -27,10 +30,10 @@ def parse_manifest(manifest_path):
 	return data
 
 
-def build():
+def build(bundle_binaries=False):
 	root_dir = os.path.abspath(os.path.dirname(__file__))
 	manifest_path = os.path.join(root_dir, "manifest.ini")
-	
+
 	if not os.path.isfile(manifest_path):
 		print("[ERROR] manifest.ini not found in:", root_dir)
 		sys.exit(1)
@@ -39,63 +42,63 @@ def build():
 	addon_name = manifest.get("name", "NV-SoftPlayer")
 	addon_version = manifest.get("version", "1.0.0")
 
-	output_filename = f"{addon_name}-{addon_version}.nvda-addon"
-	output_path = os.path.join(root_dir, output_filename)
-
-	# Verify required binaries
-	bin_dir = os.path.join(root_dir, "globalPlugins", "NV-SoftPlayer", "bin")
-	ffmpeg_path = os.path.join(bin_dir, "ffmpeg.exe")
-	ytdlp_path = os.path.join(bin_dir, "yt-dlp.exe")
+	output_addon = os.path.join(root_dir, f"{addon_name}-{addon_version}.nvda-addon")
+	output_zip = os.path.join(root_dir, f"{addon_name}-{addon_version}.zip")
 
 	print("=" * 60)
-	print(f"Building NVDA Add-on: {addon_name} v{addon_version}")
+	mode_str = "Bundled Binaries" if bundle_binaries else "Lightweight (Auto-Downloads on 1st run)"
+	print(f"Building NVDA Add-on: {addon_name} v{addon_version} [{mode_str}]")
 	print("=" * 60)
-
-	if os.path.isfile(ffmpeg_path):
-		print(f"[OK] Bundling ffmpeg.exe ({os.path.getsize(ffmpeg_path) / (1024*1024):.1f} MB)")
-	else:
-		print("[WARNING] ffmpeg.exe NOT found in bin folder!")
-
-	if os.path.isfile(ytdlp_path):
-		print(f"[OK] Bundling yt-dlp.exe ({os.path.getsize(ytdlp_path) / (1024*1024):.1f} MB)")
-	else:
-		print("[WARNING] yt-dlp.exe NOT found in bin folder!")
 
 	ignored_dirs = {"__pycache__", ".git", ".vscode", ".idea", "dist", "build"}
 	ignored_exts = {".pyc", ".pyo", ".nvda-addon", ".zip", ".delete"}
 	ignored_files = {"build_addon.py", "build_addon.ps1"}
 
+	if not bundle_binaries:
+		ignored_files.update({"ffmpeg.exe", "yt-dlp.exe"})
+
 	print("\nCompressing files into installer package...")
 	count = 0
-	with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+	with zipfile.ZipFile(output_addon, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
 		for dirpath, dirnames, filenames in os.walk(root_dir):
-			# Filter directories in-place
 			dirnames[:] = [d for d in dirnames if d not in ignored_dirs]
-
 			for filename in filenames:
 				if filename in ignored_files:
 					continue
 				_, ext = os.path.splitext(filename)
 				if ext.lower() in ignored_exts:
 					continue
-
 				abs_file = os.path.join(dirpath, filename)
-				if abs_file == output_path:
+				if abs_file in (output_addon, output_zip):
 					continue
-
 				rel_path = os.path.relpath(abs_file, root_dir).replace("\\", "/")
 				zf.write(abs_file, rel_path)
 				count += 1
 				print(f"  + {rel_path}")
 
-	size_mb = os.path.getsize(output_path) / (1024 * 1024)
+	# Also create a .zip copy for platforms that do not recognize .nvda-addon
+	shutil.copyfile(output_addon, output_zip)
+
+	size_kb = os.path.getsize(output_addon) / 1024
 	print("-" * 60)
-	print(f"[SUCCESS] Package created successfully!")
-	print(f"File: {output_path}")
+	print("[SUCCESS] Package created successfully!")
+	print(f"Add-on: {output_addon} ({size_kb:.1f} KB)")
+	print(f"ZIP:    {output_zip} ({size_kb:.1f} KB)")
 	print(f"Files included: {count}")
-	print(f"Total package size: {size_mb:.2f} MB")
+
+	desktop = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Desktop")
+	if os.path.isdir(desktop):
+		dest_addon = os.path.join(desktop, f"{addon_name}-{addon_version}.nvda-addon")
+		dest_zip = os.path.join(desktop, f"{addon_name}-{addon_version}.zip")
+		try:
+			shutil.copyfile(output_addon, dest_addon)
+			shutil.copyfile(output_zip, dest_zip)
+			print(f"[Desktop] Copied both packages to Desktop: {dest_addon}")
+		except Exception as e:
+			print(f"[Warning] Could not copy to desktop: {e}")
 	print("=" * 60)
 
 
 if __name__ == "__main__":
-	build()
+	bundle = "--bundle-binaries" in sys.argv
+	build(bundle_binaries=bundle)
