@@ -9,7 +9,6 @@ import urllib.request
 import urllib.error
 import html
 import wx
-import wx.html
 import api
 import ui
 import gui
@@ -446,10 +445,11 @@ def build_structured_lyrics_plain(title, artist, lyrics_body, song_info_dict, me
 	summary = str(meaning_summary or "Unknown").strip()
 	tracklist = str(tracklist_body or "Unknown").strip()
 	tracklist = re.sub(r"-{2,}\s*Album Tracklist\s*-{2,}", "", tracklist, flags=re.IGNORECASE).strip()
+	lyrics_text = str(lyrics_body or "").strip() or "No lyrics available."
 
 	return (
 		f"{title} – {artist}\n\n"
-		f"{lyrics_body}\n\n"
+		f"{lyrics_text}\n\n"
 		f"Song Info\n"
 		f"Singer/Artist: {singer}\n"
 		f"Lyricist: {lyricist}\n"
@@ -1012,10 +1012,13 @@ class LyricsDialog(wx.Dialog):
 			wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
 		)
 		main_sizer.Add(heading, 0, wx.EXPAND | wx.ALL, 10)
-		self.html_ctrl = wx.html.HtmlWindow(self.panel, style=wx.html.HW_SCROLLBAR_AUTO)
-		self.html_ctrl.SetPage(self.current_html)
-		self.lyrics_ctrl = self.html_ctrl
-		main_sizer.Add(self.html_ctrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+		self.lyrics_ctrl = wx.TextCtrl(
+			self.panel,
+			value=self.current_plain,
+			style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
+		)
+		self.html_ctrl = self.lyrics_ctrl
+		main_sizer.Add(self.lyrics_ctrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
 
 		qa_label = wx.StaticText(
 			self.panel,
@@ -1036,6 +1039,7 @@ class LyricsDialog(wx.Dialog):
 		self.profound_button = wx.Button(self.panel, label=_("Profound Translation"))
 		self.artist_button = wx.Button(self.panel, label=_("Artist details"))
 		self.news_button = wx.Button(self.panel, label=_("Latest Artist News"))
+		self.html_button = wx.Button(self.panel, label=_("HTML View"))
 		self.copy_button = wx.Button(self.panel, label=_("Copy Text"))
 		self.close_button = wx.Button(self.panel, wx.ID_CLOSE, label="&Close")
 		self.button_sizer.Add(self.back_button, 0, wx.ALL, 4)
@@ -1043,6 +1047,7 @@ class LyricsDialog(wx.Dialog):
 		self.button_sizer.Add(self.profound_button, 0, wx.ALL, 4)
 		self.button_sizer.Add(self.artist_button, 0, wx.ALL, 4)
 		self.button_sizer.Add(self.news_button, 0, wx.ALL, 4)
+		self.button_sizer.Add(self.html_button, 0, wx.ALL, 4)
 		self.button_sizer.Add(self.copy_button, 0, wx.ALL, 4)
 		self.button_sizer.Add(self.close_button, 0, wx.ALL, 4)
 		main_sizer.Add(self.button_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
@@ -1053,54 +1058,68 @@ class LyricsDialog(wx.Dialog):
 		self.profound_button.Bind(wx.EVT_BUTTON, lambda e: self.on_translate(profound=True))
 		self.artist_button.Bind(wx.EVT_BUTTON, self.on_artist_details)
 		self.news_button.Bind(wx.EVT_BUTTON, self.on_artist_news)
+		self.html_button.Bind(wx.EVT_BUTTON, self.on_browse_html)
 		self.copy_button.Bind(wx.EVT_BUTTON, self.on_copy)
 		self.close_button.Bind(wx.EVT_BUTTON, self.on_close)
 		self.qa_button.Bind(wx.EVT_BUTTON, self.on_ask)
 		self.qa_ctrl.Bind(wx.EVT_TEXT_ENTER, self.on_ask)
-		self.html_ctrl.Bind(wx.EVT_CONTEXT_MENU, self.on_context_menu)
+		self.lyrics_ctrl.Bind(wx.EVT_CONTEXT_MENU, self.on_context_menu)
 		self.Bind(wx.EVT_CLOSE, self.on_close)
 		self.Bind(wx.EVT_CHAR_HOOK, self.on_key_down)
-		self.html_ctrl.SetFocus()
+		self.lyrics_ctrl.SetInsertionPoint(0)
+		self.lyrics_ctrl.SetFocus()
 		self.CentreOnParent()
 
 	def on_back_to_original(self, event=None):
 		self.current_html = self.original_html
 		self.current_plain = self.original_plain
 		self.full_text = self.current_plain
-		self.html_ctrl.SetPage(self.current_html)
+		self.lyrics_ctrl.SetValue(self.current_plain)
+		self.lyrics_ctrl.SetInsertionPoint(0)
 		self.SetTitle(f"{self.song_title} - {self.artist}")
 		self._is_translated = False
 		self.back_button.Hide()
 		self.panel.Layout()
 		self.Layout()
-		self.html_ctrl.SetFocus()
+		self.lyrics_ctrl.SetFocus()
 		ui.message(_("Showing original lyrics."))
+
+	def on_browse_html(self, event=None):
+		try:
+			title = f"{self.song_title} - {self.artist}"
+			if self._is_translated:
+				title += f" ({_('Translated')})"
+			ui.browseableMessage(self.current_html, title=title, isHtml=True)
+		except Exception as e:
+			handle_error(f"Failed to open HTML view: {str(e)}")
 
 	def _get_selected_text_and_line(self):
 		try:
-			selected = ""
-			if hasattr(self.html_ctrl, "SelectionToText"):
-				selected = (self.html_ctrl.SelectionToText() or "").strip()
-			if not selected and hasattr(self, "lyrics_ctrl") and hasattr(self.lyrics_ctrl, "GetSelection"):
-				try:
-					start, end = self.lyrics_ctrl.GetSelection()
-					full = self.lyrics_ctrl.GetValue()
-					if start != end and start >= 0:
-						selected = full[start:end].strip()
-				except Exception:
-					pass
-			return selected, selected
+			if hasattr(self, "lyrics_ctrl") and hasattr(self.lyrics_ctrl, "GetSelection"):
+				start, end = self.lyrics_ctrl.GetSelection()
+				full = self.lyrics_ctrl.GetValue()
+				if start != end and start >= 0:
+					selected = full[start:end].strip()
+					if selected:
+						line_start = full.rfind("\n", 0, start) + 1
+						line_end = full.find("\n", end)
+						if line_end < 0:
+							line_end = len(full)
+						line = full[line_start:line_end].strip()
+						return selected, line
+			return "", ""
 		except Exception:
 			return "", ""
 
-	def on_context_menu(self, event):
+	def on_context_menu(self, event=None):
 		selected, line = self._get_selected_text_and_line()
 		menu = wx.Menu()
 		id_translate = wx.NewIdRef()
 		id_profound = wx.NewIdRef()
-		id_copy = wx.NewIdRef()
 		id_full_translate = wx.NewIdRef()
 		id_full_profound = wx.NewIdRef()
+		id_browse_html = wx.NewIdRef()
+		id_copy = wx.NewIdRef()
 
 		if selected:
 			label = (
@@ -1114,6 +1133,7 @@ class LyricsDialog(wx.Dialog):
 		menu.Append(id_full_translate, "Translate full lyrics")
 		menu.Append(id_full_profound, "Profound translation of full lyrics")
 		menu.AppendSeparator()
+		menu.Append(id_browse_html, _("HTML View (Browse Mode)"))
 		menu.Append(id_copy, _("Copy Text"))
 
 		if selected:
@@ -1121,6 +1141,7 @@ class LyricsDialog(wx.Dialog):
 			self.Bind(wx.EVT_MENU, lambda e: self.on_translate_selection(selected, line, profound=True), id=id_profound)
 		self.Bind(wx.EVT_MENU, lambda e: self.on_translate(profound=False), id=id_full_translate)
 		self.Bind(wx.EVT_MENU, lambda e: self.on_translate(profound=True), id=id_full_profound)
+		self.Bind(wx.EVT_MENU, self.on_browse_html, id=id_browse_html)
 		self.Bind(wx.EVT_MENU, self.on_copy, id=id_copy)
 
 		try:
@@ -1539,12 +1560,13 @@ class LyricsDialog(wx.Dialog):
 		self.current_html = trans_html
 		self.current_plain = trans_plain
 		self.full_text = trans_plain
-		self.html_ctrl.SetPage(self.current_html)
+		self.lyrics_ctrl.SetValue(self.current_plain)
+		self.lyrics_ctrl.SetInsertionPoint(0)
 		self.SetTitle(f"{self.song_title} - {self.artist} ({_('Translated')})")
 		self.back_button.Show()
 		self.panel.Layout()
 		self.Layout()
-		self.html_ctrl.SetFocus()
+		self.lyrics_ctrl.SetFocus()
 		ui.message(_("Translation completed."))
 
 	def on_key_down(self, event):
