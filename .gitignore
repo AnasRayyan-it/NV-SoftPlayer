@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# NVDA addon packages & archives (upload these to GitHub Releases instead)
+*.nvda-addon
+*.zip
+*.tar.gz
+*.delete
+
+# Executables & large binaries
+# Note: ffmpeg.exe is ~101MB which exceeds GitHub's 100MB per-file upload limit
+globalPlugins/NV-SoftPlayer/bin/*.exe
+*.exe
+
+# Editor & IDE files
+.vscode/
+.idea/
+*.swp
+*~
