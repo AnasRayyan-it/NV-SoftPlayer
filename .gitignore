@@ -3,11 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# NVDA addon packages & archives (upload these to GitHub Releases instead)
+# NVDA addon packages & archives
 *.nvda-addon
 *.zip
 *.tar.gz
 *.delete
+!release/*.nvda-addon
+!release/*.zip
 
 # Executables & large binaries
 # Note: ffmpeg.exe is ~101MB which exceeds GitHub's 100MB per-file upload limit
