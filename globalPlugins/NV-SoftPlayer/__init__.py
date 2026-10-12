@@ -54,6 +54,8 @@ from .youtubePlayer import (
 	show_youtube_dialog,
 )
 
+from .updater import check_for_updates_async
+
 config.conf.spec["nvSoftPlayer"] = {
 	"ignoreWords": 'string(default="")',
 	"geminiApiKey": 'string(default="")',
@@ -62,6 +64,8 @@ config.conf.spec["nvSoftPlayer"] = {
 	"preferredLanguages": 'string(default="Arabic,English")',
 	"repeatOn": "boolean(default=False)",
 	"shuffleOn": "boolean(default=False)",
+	"suppressUpdates": "boolean(default=False)",
+	"remindAfter": "float(default=0.0)",
 }
 
 
@@ -168,6 +172,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		threading.Thread(
 			target=cleanup_temp_files, daemon=True, name="NVSoftPlayer-AutoCleanup"
 		).start()
+		# Check for updates in the background on startup
+		threading.Thread(
+			target=check_for_updates_async, daemon=True, name="NVSoftPlayer-UpdateCheck"
+		).start()
 
 	def terminate(self):
 		self._unregisterSettingsPanel()
@@ -207,13 +215,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		except Exception:
 			pass
 
-	def _open_player(self, paths, repeat_scope, titles=None, quiet_open=False):
+	def _open_player(self, paths, repeat_scope, titles=None, quiet_open=False, chapters=None):
 		dialog = open_player(
 			paths,
 			repeat_scope=repeat_scope,
 			titles=titles,
 			quiet_open=quiet_open,
 			existing_dialog=self._playerDialog,
+			chapters=chapters,
 		)
 		if dialog:
 			self._playerDialog = dialog

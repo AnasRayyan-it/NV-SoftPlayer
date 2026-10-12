@@ -442,13 +442,14 @@ def create_media_backend():
 
 
 class NVSoftPlayerDialog(wx.Dialog):
-	def __init__(self, parent, paths, repeat_scope="playlist", titles=None, quiet_open=False):
+	def __init__(self, parent, paths, repeat_scope="playlist", titles=None, quiet_open=False, chapters=None):
 		self.original_paths = list(paths)
 		self.queue = list(paths)
 		self.titles = list(titles) if titles else [display_name(p) for p in paths]
 		self.repeat_scope = repeat_scope if repeat_scope in ("track", "playlist") else "playlist"
 		self.repeat_on = get_repeat_on()
 		self.shuffle_on = get_shuffle_on()
+		self.chapters = list(chapters) if chapters else []
 		self.index = 0
 		self._closed = False
 		self._stop_requested = False
@@ -713,7 +714,39 @@ class NVSoftPlayerDialog(wx.Dialog):
 		except Exception:
 			pass
 		self.status_label.SetLabel(f"Player volume {new_vol} percent")
-		ui.message(f"{new_vol}%")
+
+	def set_chapters(self, chapters):
+		self.chapters = list(chapters) if chapters else []
+
+	def jump_to_chapter_or_percent(self, digit):
+		if not self.backend:
+			return
+		duration = self.backend.duration_seconds()
+		# If video has chapters provided by creator
+		if self.chapters and len(self.chapters) > 0:
+			if digit < len(self.chapters):
+				ch = self.chapters[digit]
+				start_time = float(ch.get("start_time", 0.0))
+				title = ch.get("title", f"Chapter {digit + 1}")
+				self._duck_for_seek()
+				self.backend.seek(start_time)
+				msg = f"Chapter {digit + 1}: {title} ({format_time(start_time)})"
+				self.status_label.SetLabel(msg)
+				ui.message(msg)
+				return
+		# Standard YouTube percentage jump (0=0%, 1=10%, 2=20%, ..., 9=90%)
+		if duration > 0:
+			target_pos = (digit / 10.0) * duration
+			self._duck_for_seek()
+			self.backend.seek(target_pos)
+			msg = f"{digit * 10}%, {format_time(target_pos)} of {format_time(duration)}"
+			self.status_label.SetLabel(msg)
+			ui.message(msg)
+		elif digit == 0:
+			self._duck_for_seek()
+			self.backend.seek(0)
+			self.status_label.SetLabel("Start of track")
+			ui.message("Start of track")
 
 	def on_media_finished(self):
 		if self._closed or self._stop_requested or self._switching:
@@ -973,6 +1006,22 @@ class NVSoftPlayerDialog(wx.Dialog):
 			if not self._quiet_open:
 				ui.message(self._full_help)
 			return
+		# Number keys 0-9: jump to chapters or percentage
+		num_map = {
+			ord('0'): 0, wx.WXK_NUMPAD0: 0,
+			ord('1'): 1, wx.WXK_NUMPAD1: 1,
+			ord('2'): 2, wx.WXK_NUMPAD2: 2,
+			ord('3'): 3, wx.WXK_NUMPAD3: 3,
+			ord('4'): 4, wx.WXK_NUMPAD4: 4,
+			ord('5'): 5, wx.WXK_NUMPAD5: 5,
+			ord('6'): 6, wx.WXK_NUMPAD6: 6,
+			ord('7'): 7, wx.WXK_NUMPAD7: 7,
+			ord('8'): 8, wx.WXK_NUMPAD8: 8,
+			ord('9'): 9, wx.WXK_NUMPAD9: 9,
+		}
+		if not ctrl and not event.AltDown() and key in num_map:
+			self.jump_to_chapter_or_percent(num_map[key])
+			return
 		event.Skip()
 
 	def on_close(self, event=None):
@@ -998,12 +1047,14 @@ class NVSoftPlayerDialog(wx.Dialog):
 		self.Destroy()
 
 
-def open_player(paths, repeat_scope="playlist", titles=None, quiet_open=False, existing_dialog=None):
+def open_player(paths, repeat_scope="playlist", titles=None, quiet_open=False, existing_dialog=None, chapters=None):
 	if not paths:
 		handle_error("No audio files were found.")
 		return None
 	if existing_dialog:
 		try:
+			if hasattr(existing_dialog, "set_chapters"):
+				existing_dialog.set_chapters(chapters)
 			if existing_dialog.load_new_queue(
 				paths, titles, repeat_scope, quiet_open=quiet_open
 			):
@@ -1016,7 +1067,7 @@ def open_player(paths, repeat_scope="playlist", titles=None, quiet_open=False, e
 	gui.mainFrame.prePopup()
 	dialog = NVSoftPlayerDialog(
 		gui.mainFrame, paths, repeat_scope=repeat_scope, titles=titles,
-		quiet_open=quiet_open,
+		quiet_open=quiet_open, chapters=chapters,
 	)
 	dialog.Show()
 	dialog.Raise()

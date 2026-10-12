@@ -340,6 +340,30 @@ def youtube_prepare_video(page_url):
 	return None, error or "Could not prepare a local video file."
 
 
+def youtube_get_chapters(page_url):
+	if not page_url:
+		return []
+	args = [
+		"--no-playlist",
+		"--no-warnings",
+		"--socket-timeout", "8",
+		"--print", "%(chapters)j",
+		page_url,
+	]
+	proc, err = _run_ytdlp(args, timeout=12)
+	if proc and proc.stdout:
+		for line in proc.stdout.splitlines():
+			line = line.strip()
+			if line.startswith("[") and line.endswith("]"):
+				try:
+					data = json.loads(line)
+					if isinstance(data, list):
+						return data
+				except Exception:
+					pass
+	return []
+
+
 def youtube_expand_playlist(playlist_url, max_items=50):
 	args = list(YT_CLIENT_ARGS) + [
 		"--flat-playlist",
@@ -646,9 +670,28 @@ class YouTubeDialog(wx.Dialog):
 	def on_key_down(self, event):
 		key = event.GetKeyCode()
 		alt_down = event.AltDown()
+		ctrl_down = event.ControlDown()
 		if key == wx.WXK_ESCAPE:
 			self.on_close(event)
 			return
+
+		# Item 7: Quick navigation: E or Shift + E focuses the search field
+		if not alt_down and not ctrl_down and key in (ord('E'), ord('e')):
+			if self.FindFocus() != self.query_ctrl:
+				self.query_ctrl.SetFocus()
+				self.query_ctrl.SelectAll()
+				return
+
+		# Item 8: Download shortcuts: Ctrl + D = MP3, Ctrl + V = MP4
+		if ctrl_down and not alt_down:
+			if key in (ord('D'), ord('d')):
+				self.on_download("mp3")
+				return
+			if key in (ord('V'), ord('v')):
+				if self.FindFocus() != self.query_ctrl:
+					self.on_download("mp4")
+					return
+
 		if alt_down and key in (ord('A'), ord('a')):
 			self.on_play_audio(event)
 			return
@@ -794,6 +837,10 @@ class YouTubeDialog(wx.Dialog):
 		first = items[0]
 		page_url = first.get("url") or ""
 		title = first.get("title") or "YouTube track"
+		chapters = first.get("chapters")
+		if chapters is None:
+			chapters = youtube_get_chapters(page_url)
+			first["chapters"] = chapters
 		media, error = youtube_prepare_audio(page_url)
 		if not media:
 			wx.CallAfter(
@@ -803,7 +850,7 @@ class YouTubeDialog(wx.Dialog):
 			return
 		stream_urls = [media]
 		titles = [title]
-		wx.CallAfter(self._start_audio_player, list(stream_urls), list(titles))
+		wx.CallAfter(self._start_audio_player, list(stream_urls), list(titles), chapters)
 		for item in items[1:]:
 			page_url = item.get("url") or ""
 			if not page_url:
@@ -823,14 +870,14 @@ class YouTubeDialog(wx.Dialog):
 		except Exception:
 			pass
 
-	def _start_audio_player(self, stream_urls, titles):
+	def _start_audio_player(self, stream_urls, titles, chapters=None):
 		if self._closed:
 			return
 		self._set_busy(False, _("Playing. Search window stays open."))
 		_cancel_speech()
 		if self.plugin:
 			self.plugin._open_player(
-				stream_urls, repeat_scope="playlist", titles=titles, quiet_open=True
+				stream_urls, repeat_scope="playlist", titles=titles, quiet_open=True, chapters=chapters
 			)
 
 	def on_play_video(self, event):
@@ -873,13 +920,17 @@ class YouTubeDialog(wx.Dialog):
 		first = items[0]
 		page_url = first.get("url") or ""
 		title = first.get("title") or "YouTube video"
+		chapters = first.get("chapters")
+		if chapters is None:
+			chapters = youtube_get_chapters(page_url)
+			first["chapters"] = chapters
 		media, error = youtube_prepare_video(page_url)
 		if not media:
 			wx.CallAfter(self._fail, error or _("Could not prepare any video."))
 			return
 		stream_urls = [media]
 		titles = [title]
-		wx.CallAfter(self._start_video_player, media, title)
+		wx.CallAfter(self._start_video_player, media, title, chapters)
 		for item in items[1:]:
 			u = item.get("url") or ""
 			if not u:
@@ -894,20 +945,24 @@ class YouTubeDialog(wx.Dialog):
 	def _play_video_worker(self, item):
 		page_url = item.get("url") or ""
 		title = item.get("title") or "YouTube video"
+		chapters = item.get("chapters")
+		if chapters is None:
+			chapters = youtube_get_chapters(page_url)
+			item["chapters"] = chapters
 		media, error = youtube_prepare_video(page_url)
 		if error or not media:
 			wx.CallAfter(self._fail, error or _("Could not extract video."))
 			return
-		wx.CallAfter(self._start_video_player, media, title)
+		wx.CallAfter(self._start_video_player, media, title, chapters)
 
-	def _start_video_player(self, media_path, title):
+	def _start_video_player(self, media_path, title, chapters=None):
 		if self._closed:
 			return
 		self._set_busy(False, _("Playing. Search window stays open."))
 		_cancel_speech()
 		if self.plugin:
 			self.plugin._open_player(
-				[media_path], repeat_scope="track", titles=[title], quiet_open=True
+				[media_path], repeat_scope="track", titles=[title], quiet_open=True, chapters=chapters
 			)
 
 	def on_download(self, kind):

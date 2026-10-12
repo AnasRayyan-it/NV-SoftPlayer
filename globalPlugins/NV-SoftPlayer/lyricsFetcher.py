@@ -7,7 +7,9 @@ import threading
 import urllib.parse
 import urllib.request
 import urllib.error
+import html
 import wx
+import wx.html
 import api
 import ui
 import gui
@@ -297,10 +299,10 @@ def fetch_song_metadata(title, artist):
 		"artist for names of albums and tracks when they are Arabic.\n\n"
 		"Format the answer as plain text using exactly these labels:\n"
 		"Singer/Artist:\n"
-		"Lyrics Writer:\n"
+		"Lyricist:\n"
 		"Album:\n"
 		"Release Year:\n"
-		"Music Producer/Label:\n"
+		"Producer/Label:\n"
 		"Short summary of the song meaning:\n\n"
 		"Then add this exact section:\n"
 		"--- Album Tracklist ---\n"
@@ -323,6 +325,177 @@ def fetch_song_metadata(title, artist):
 		info = text
 		tracklist = "--- Album Tracklist ---\nUnknown"
 	return info, tracklist
+
+
+def parse_metadata_dict(meta_text):
+	d = {
+		"singer": "",
+		"lyricist": "",
+		"album": "",
+		"release_year": "",
+		"producer": "",
+		"summary": "",
+	}
+	if not meta_text:
+		return d
+
+	def find_field(patterns):
+		for pat in patterns:
+			m = re.search(rf"(?:{pat})\s*:\s*(.*?)(?=\n[A-Za-z\u0600-\u06FF\s]+:|\n---|\Z)", meta_text, re.DOTALL | re.IGNORECASE)
+			if m:
+				val = m.group(1).strip()
+				if val:
+					return val
+		return ""
+
+	d["singer"] = find_field([r"Singer/Artist", r"Singer", r"Artist", r"المغني/الفنان", r"المغني", r"الفنان"])
+	d["lyricist"] = find_field([r"Lyricist", r"Lyrics Writer", r"Writer", r"الشاعر", r"كاتب الكلمات", r"المؤلف"])
+	d["album"] = find_field([r"Album", r"الألبوم"])
+	d["release_year"] = find_field([r"Release Year", r"Year", r"سنة الإصدار", r"سنة النشر", r"السنة"])
+	d["producer"] = find_field([r"Producer/Label", r"Music Producer/Label", r"Producer", r"Label", r"المنتج/شركة الإنتاج", r"المنتج", r"شركة الإنتاج"])
+	d["summary"] = find_field([r"Short summary of the song meaning", r"Meaning / Summary", r"Summary", r"Meaning", r"ملخص معنى الأغنية", r"المعنى / الملخص", r"الملخص", r"المعنى"])
+
+	if not d["summary"]:
+		m = re.search(r"(?:summary|meaning|ملخص|قصة الأغنية)[^\n]*\n+(.*?)(?=\n---|\Z)", meta_text, re.DOTALL | re.IGNORECASE)
+		if m:
+			d["summary"] = m.group(1).strip()
+	return d
+
+
+def build_structured_lyrics_html(title, artist, lyrics_body, song_info_dict, meaning_summary, tracklist_body):
+	title_esc = html.escape(str(title or "").strip())
+	artist_esc = html.escape(str(artist or "").strip())
+
+	lyrics_lines = [html.escape(l) for l in str(lyrics_body or "").strip().splitlines()]
+	lyrics_html = "<br>\n".join(lyrics_lines) if lyrics_lines else "<em>No lyrics available</em>"
+
+	singer = html.escape(str(song_info_dict.get("singer") or artist or "Unknown").strip())
+	lyricist = html.escape(str(song_info_dict.get("lyricist") or "Unknown").strip())
+	album = html.escape(str(song_info_dict.get("album") or "Unknown").strip())
+	release_year = html.escape(str(song_info_dict.get("release_year") or "Unknown").strip())
+	producer = html.escape(str(song_info_dict.get("producer") or "Unknown").strip())
+
+	summary_text = str(meaning_summary or "No summary available.").strip()
+	summary_html = "<br>\n".join(html.escape(l) for l in summary_text.splitlines())
+
+	tracklist_text = str(tracklist_body or "Unknown").strip()
+	tracklist_text = re.sub(r"-{2,}\s*Album Tracklist\s*-{2,}", "", tracklist_text, flags=re.IGNORECASE).strip()
+	tracklist_html = "<br>\n".join(html.escape(l) for l in tracklist_text.splitlines())
+
+	doc = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {{
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+	font-size: 13pt;
+	line-height: 1.6;
+	padding: 12px;
+	color: #111;
+}}
+h1 {{
+	font-size: 18pt;
+	margin-top: 0;
+	margin-bottom: 14px;
+	color: #000;
+}}
+h2 {{
+	font-size: 14pt;
+	margin-top: 22px;
+	margin-bottom: 8px;
+	border-bottom: 1px solid #ccc;
+	padding-bottom: 4px;
+	color: #111;
+}}
+p {{
+	margin-top: 6px;
+	margin-bottom: 10px;
+}}
+</style>
+</head>
+<body>
+<h1>{title_esc} – {artist_esc}</h1>
+<p>{lyrics_html}</p>
+
+<h2>Song Info</h2>
+<p>
+<strong>Singer/Artist:</strong> {singer}<br>
+<strong>Lyricist:</strong> {lyricist}<br>
+<strong>Album:</strong> {album}<br>
+<strong>Release Year:</strong> {release_year}<br>
+<strong>Producer/Label:</strong> {producer}
+</p>
+
+<h2>Meaning / Summary</h2>
+<p>{summary_html}</p>
+
+<h2>Album Tracklist</h2>
+<p>{tracklist_html}</p>
+</body>
+</html>"""
+	return doc
+
+
+def build_structured_lyrics_plain(title, artist, lyrics_body, song_info_dict, meaning_summary, tracklist_body):
+	singer = str(song_info_dict.get("singer") or artist or "Unknown").strip()
+	lyricist = str(song_info_dict.get("lyricist") or "Unknown").strip()
+	album = str(song_info_dict.get("album") or "Unknown").strip()
+	release_year = str(song_info_dict.get("release_year") or "Unknown").strip()
+	producer = str(song_info_dict.get("producer") or "Unknown").strip()
+	summary = str(meaning_summary or "Unknown").strip()
+	tracklist = str(tracklist_body or "Unknown").strip()
+	tracklist = re.sub(r"-{2,}\s*Album Tracklist\s*-{2,}", "", tracklist, flags=re.IGNORECASE).strip()
+
+	return (
+		f"{title} – {artist}\n\n"
+		f"{lyrics_body}\n\n"
+		f"Song Info\n"
+		f"Singer/Artist: {singer}\n"
+		f"Lyricist: {lyricist}\n"
+		f"Album: {album}\n"
+		f"Release Year: {release_year}\n"
+		f"Producer/Label: {producer}\n\n"
+		f"Meaning / Summary\n"
+		f"{summary}\n\n"
+		f"Album Tracklist\n"
+		f"{tracklist}\n\n"
+		f"By Anas Rayyan"
+	)
+
+
+def parse_translated_sections(raw_text, original_meta_dict=None, default_tracklist=""):
+	if not raw_text:
+		return "", dict(original_meta_dict or {}), "", default_tracklist or ""
+	meta_dict = dict(original_meta_dict or {})
+	lyrics = ""
+	summary = ""
+	tracklist = default_tracklist or ""
+
+	sections = re.split(r"-{2,}\s*([^\n-]+?)\s*-{2,}", raw_text)
+	if len(sections) >= 3:
+		i = 1
+		while i < len(sections):
+			sec_title = sections[i].lower()
+			sec_body = sections[i + 1].strip() if i + 1 < len(sections) else ""
+			if any(k in sec_title for k in ["lyric", "parole", "كلمات"]):
+				lyrics = sec_body
+			elif any(k in sec_title for k in ["info", "معلومات"]):
+				parsed_meta = parse_metadata_dict(sec_body)
+				for k, v in parsed_meta.items():
+					if v:
+						meta_dict[k] = v
+			elif any(k in sec_title for k in ["summary", "meaning", "ملخص", "معنى"]):
+				summary = sec_body
+			elif any(k in sec_title for k in ["tracklist", "album", "قائمة"]):
+				tracklist = sec_body
+			i += 2
+	else:
+		lyrics = raw_text.strip()
+
+	if not summary:
+		summary = meta_dict.get("summary", "")
+	return lyrics, meta_dict, summary, tracklist
 
 
 def fetch_artist_details(artist, target_language=None, profound=False):
@@ -522,21 +695,20 @@ def fetch_lyrics_online(query):
 					plain_parts.append(line)
 			plain_lyrics = "\n".join(plain_parts)
 		meta_info, tracklist = fetch_song_metadata(title, artist)
-		final_text = (
-			f"{plain_lyrics}\n\n"
-			f"--- Song Info ---\n"
-			f"{meta_info}\n\n"
-			f"{tracklist}\n\n"
-			f"By Anas Rayyan"
-		)
+		meta_dict = parse_metadata_dict(meta_info)
+		summary_text = meta_dict.get("summary") or "Song information retrieved from AI assistant."
+		structured_html = build_structured_lyrics_html(title, artist, plain_lyrics, meta_dict, summary_text, tracklist)
+		structured_plain = build_structured_lyrics_plain(title, artist, plain_lyrics, meta_dict, summary_text, tracklist)
 		return (
 			{
 				"title": title,
 				"artist": artist,
-				"lyrics": final_text,
+				"lyrics": structured_plain,
+				"html": structured_html,
 				"raw_lyrics": plain_lyrics,
 				"song_info": meta_info,
 				"tracklist": tracklist,
+				"meta_dict": meta_dict,
 			},
 			None
 		)
@@ -807,7 +979,19 @@ class LyricsDialog(wx.Dialog):
 		self.artist = result.get("artist", "Unknown artist")
 		self.raw_lyrics = result.get("raw_lyrics", "")
 		self.song_info = result.get("song_info", "")
-		self.full_text = result.get("lyrics", "")
+		self.meta_dict = result.get("meta_dict") or parse_metadata_dict(self.song_info)
+		self.tracklist = result.get("tracklist", "")
+		self.original_html = result.get("html") or build_structured_lyrics_html(
+			self.song_title, self.artist, self.raw_lyrics,
+			self.meta_dict, self.meta_dict.get("summary", ""), self.tracklist
+		)
+		self.original_plain = result.get("lyrics") or build_structured_lyrics_plain(
+			self.song_title, self.artist, self.raw_lyrics,
+			self.meta_dict, self.meta_dict.get("summary", ""), self.tracklist
+		)
+		self.current_html = self.original_html
+		self.current_plain = self.original_plain
+		self.full_text = self.current_plain
 		self._closed = False
 		self._translating = False
 		self._artist_loading = False
@@ -819,49 +1003,52 @@ class LyricsDialog(wx.Dialog):
 		self._is_translated = False
 		self._artist_dialog = None
 		self._result_dialog = None
-		super().__init__(parent, title=f"{_('Translate Lyrics')} - {self.song_title}", size=(760, 680))
+		super().__init__(parent, title=f"{self.song_title} - {self.artist}", size=(760, 680))
 		apply_ui_layout(self)
-		panel = wx.Panel(self)
+		self.panel = wx.Panel(self)
 		main_sizer = wx.BoxSizer(wx.VERTICAL)
-		heading = wx.StaticText(panel, label=f"{self.song_title} — {self.artist}")
+		heading = wx.StaticText(self.panel, label=f"{self.song_title} — {self.artist}")
 		heading.SetFont(
 			wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
 		)
 		main_sizer.Add(heading, 0, wx.EXPAND | wx.ALL, 10)
-		self.lyrics_ctrl = wx.TextCtrl(
-			panel, value=self.full_text,
-			style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
-		)
-		main_sizer.Add(self.lyrics_ctrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+		self.html_ctrl = wx.html.HtmlWindow(self.panel, style=wx.html.HW_SCROLLBAR_AUTO)
+		self.html_ctrl.SetPage(self.current_html)
+		self.lyrics_ctrl = self.html_ctrl
+		main_sizer.Add(self.html_ctrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
 
 		qa_label = wx.StaticText(
-			panel,
+			self.panel,
 			label=_("Ask about this song / artist / lyrics (music topics only):"),
 		)
 		main_sizer.Add(qa_label, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
 		qa_row = wx.BoxSizer(wx.HORIZONTAL)
-		self.qa_ctrl = wx.TextCtrl(panel, style=wx.TE_PROCESS_ENTER)
+		self.qa_ctrl = wx.TextCtrl(self.panel, style=wx.TE_PROCESS_ENTER)
 		qa_row.Add(self.qa_ctrl, 1, wx.EXPAND | wx.RIGHT, 6)
-		self.qa_button = wx.Button(panel, label="&" + _("Ask"))
+		self.qa_button = wx.Button(self.panel, label="&" + _("Ask"))
 		qa_row.Add(self.qa_button, 0)
 		main_sizer.Add(qa_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-		button_sizer = wx.BoxSizer(wx.HORIZONTAL)
-		self.translate_button = wx.Button(panel, label=_("Translate Lyrics"))
-		self.profound_button = wx.Button(panel, label=_("Profound Translation"))
-		self.artist_button = wx.Button(panel, label=_("Artist details"))
-		self.news_button = wx.Button(panel, label=_("Latest Artist News"))
-		self.copy_button = wx.Button(panel, label=_("Copy Text"))
-		self.close_button = wx.Button(panel, wx.ID_CLOSE, label="&Close")
-		button_sizer.Add(self.translate_button, 0, wx.ALL, 4)
-		button_sizer.Add(self.profound_button, 0, wx.ALL, 4)
-		button_sizer.Add(self.artist_button, 0, wx.ALL, 4)
-		button_sizer.Add(self.news_button, 0, wx.ALL, 4)
-		button_sizer.Add(self.copy_button, 0, wx.ALL, 4)
-		button_sizer.Add(self.close_button, 0, wx.ALL, 4)
-		main_sizer.Add(button_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
-		panel.SetSizer(main_sizer)
+		self.button_sizer = wx.BoxSizer(wx.HORIZONTAL)
+		self.back_button = wx.Button(self.panel, label=_("Back to Original Lyrics"))
+		self.back_button.Hide()
+		self.translate_button = wx.Button(self.panel, label=_("Translate Lyrics"))
+		self.profound_button = wx.Button(self.panel, label=_("Profound Translation"))
+		self.artist_button = wx.Button(self.panel, label=_("Artist details"))
+		self.news_button = wx.Button(self.panel, label=_("Latest Artist News"))
+		self.copy_button = wx.Button(self.panel, label=_("Copy Text"))
+		self.close_button = wx.Button(self.panel, wx.ID_CLOSE, label="&Close")
+		self.button_sizer.Add(self.back_button, 0, wx.ALL, 4)
+		self.button_sizer.Add(self.translate_button, 0, wx.ALL, 4)
+		self.button_sizer.Add(self.profound_button, 0, wx.ALL, 4)
+		self.button_sizer.Add(self.artist_button, 0, wx.ALL, 4)
+		self.button_sizer.Add(self.news_button, 0, wx.ALL, 4)
+		self.button_sizer.Add(self.copy_button, 0, wx.ALL, 4)
+		self.button_sizer.Add(self.close_button, 0, wx.ALL, 4)
+		main_sizer.Add(self.button_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
+		self.panel.SetSizer(main_sizer)
 
+		self.back_button.Bind(wx.EVT_BUTTON, self.on_back_to_original)
 		self.translate_button.Bind(wx.EVT_BUTTON, lambda e: self.on_translate(profound=False))
 		self.profound_button.Bind(wx.EVT_BUTTON, lambda e: self.on_translate(profound=True))
 		self.artist_button.Bind(wx.EVT_BUTTON, self.on_artist_details)
@@ -870,27 +1057,39 @@ class LyricsDialog(wx.Dialog):
 		self.close_button.Bind(wx.EVT_BUTTON, self.on_close)
 		self.qa_button.Bind(wx.EVT_BUTTON, self.on_ask)
 		self.qa_ctrl.Bind(wx.EVT_TEXT_ENTER, self.on_ask)
-		self.lyrics_ctrl.Bind(wx.EVT_CONTEXT_MENU, self.on_context_menu)
+		self.html_ctrl.Bind(wx.EVT_CONTEXT_MENU, self.on_context_menu)
 		self.Bind(wx.EVT_CLOSE, self.on_close)
 		self.Bind(wx.EVT_CHAR_HOOK, self.on_key_down)
-		self.lyrics_ctrl.SetFocus()
+		self.html_ctrl.SetFocus()
 		self.CentreOnParent()
+
+	def on_back_to_original(self, event=None):
+		self.current_html = self.original_html
+		self.current_plain = self.original_plain
+		self.full_text = self.current_plain
+		self.html_ctrl.SetPage(self.current_html)
+		self.SetTitle(f"{self.song_title} - {self.artist}")
+		self._is_translated = False
+		self.back_button.Hide()
+		self.panel.Layout()
+		self.Layout()
+		self.html_ctrl.SetFocus()
+		ui.message(_("Showing original lyrics."))
 
 	def _get_selected_text_and_line(self):
 		try:
-			start, end = self.lyrics_ctrl.GetSelection()
-			full = self.lyrics_ctrl.GetValue()
-			if start == end or start < 0:
-				return "", ""
-			selected = full[start:end].strip()
-			if not selected:
-				return "", ""
-			line_start = full.rfind("\n", 0, start) + 1
-			line_end = full.find("\n", end)
-			if line_end < 0:
-				line_end = len(full)
-			line = full[line_start:line_end].strip()
-			return selected, line
+			selected = ""
+			if hasattr(self.html_ctrl, "SelectionToText"):
+				selected = (self.html_ctrl.SelectionToText() or "").strip()
+			if not selected and hasattr(self, "lyrics_ctrl") and hasattr(self.lyrics_ctrl, "GetSelection"):
+				try:
+					start, end = self.lyrics_ctrl.GetSelection()
+					full = self.lyrics_ctrl.GetValue()
+					if start != end and start >= 0:
+						selected = full[start:end].strip()
+				except Exception:
+					pass
+			return selected, selected
 		except Exception:
 			return "", ""
 
@@ -1269,6 +1468,7 @@ class LyricsDialog(wx.Dialog):
 		)
 		lyrics = self.raw_lyrics
 		song_info = self.song_info
+		tracklist = self.tracklist
 		title = self.song_title
 		artist = self.artist
 
@@ -1282,28 +1482,43 @@ class LyricsDialog(wx.Dialog):
 					"line-by-line rendering."
 				)
 			prompt = (
-				f"You are a professional translator. Translate EVERYTHING into {target_lang}.\n"
-				f"Write ALL output in {target_lang} only. Do not leave English sentences "
-				f"except proper names that are normally kept.{style}\n\n"
-				f"Song title: {title}\n"
-				f"Artist: {artist}\n\n"
+				f"You are a professional translator and music researcher. Translate EVERYTHING into {target_lang}.\n"
+				f"Write ALL output in {target_lang} only (except proper names that are normally kept).{style}\n\n"
+				f"Song: {title} - {artist}\n\n"
 				f"Use exactly this structure:\n\n"
 				f"--- Translated Lyrics ---\n"
-				f"(Literal or idiomatic translation of the lyrics)\n\n"
+				f"(Translate the song lyrics here line-by-line)\n\n"
 				f"--- Song Info ---\n"
-				f"(Translate every field of the song information into {target_lang})\n\n"
+				f"Singer/Artist: (translated/kept artist name)\n"
+				f"Lyricist: (translated/kept lyricist)\n"
+				f"Album: (translated/kept album name)\n"
+				f"Release Year: (year)\n"
+				f"Producer/Label: (producer or label)\n\n"
 				f"--- Summary ---\n"
 				f"(A clear summary of the song's story, emotion, and meaning, "
 				f"written entirely in {target_lang}. This section is required.)\n\n"
+				f"--- Album Tracklist ---\n"
+				f"(Album tracklist if known, or write Unknown)\n\n"
 				f"Original lyrics:\n{lyrics}\n\n"
-				f"Original song info:\n{song_info}\n"
+				f"Original song info:\n{song_info}\n\n"
+				f"Original tracklist:\n{tracklist}\n"
 			)
 			translated_result, error = call_ai_api(prompt)
 			if error:
 				wx.CallAfter(self._translation_failed, error)
 				return
-			final_text = f"{translated_result.strip()}\n\nBy Anas Rayyan"
-			wx.CallAfter(self.update_lyrics_text, final_text)
+			trans_lyrics, trans_meta, trans_summary, trans_tracklist = parse_translated_sections(
+				translated_result, self.meta_dict, self.tracklist
+			)
+			if not trans_lyrics:
+				trans_lyrics = translated_result.strip()
+			trans_html = build_structured_lyrics_html(
+				title, artist, trans_lyrics, trans_meta, trans_summary, trans_tracklist
+			)
+			trans_plain = build_structured_lyrics_plain(
+				title, artist, trans_lyrics, trans_meta, trans_summary, trans_tracklist
+			)
+			wx.CallAfter(self.update_lyrics_text, trans_html, trans_plain)
 
 		threading.Thread(target=translate_worker, daemon=True).start()
 
@@ -1314,17 +1529,23 @@ class LyricsDialog(wx.Dialog):
 			self.profound_button.Enable()
 		handle_error(error)
 
-	def update_lyrics_text(self, text):
+	def update_lyrics_text(self, trans_html, trans_plain):
 		self._translating = False
 		self._is_translated = True
 		if self._closed:
 			return
 		self.translate_button.Enable()
 		self.profound_button.Enable()
-		self.full_text = text
-		self.lyrics_ctrl.SetValue(text)
-		self.lyrics_ctrl.SetFocus()
-		ui.message("Translation completed.")
+		self.current_html = trans_html
+		self.current_plain = trans_plain
+		self.full_text = trans_plain
+		self.html_ctrl.SetPage(self.current_html)
+		self.SetTitle(f"{self.song_title} - {self.artist} ({_('Translated')})")
+		self.back_button.Show()
+		self.panel.Layout()
+		self.Layout()
+		self.html_ctrl.SetFocus()
+		ui.message(_("Translation completed."))
 
 	def on_key_down(self, event):
 		key = event.GetKeyCode()
@@ -1338,10 +1559,10 @@ class LyricsDialog(wx.Dialog):
 			return
 		event.Skip()
 
-	def on_copy(self, event):
+	def on_copy(self, event=None):
 		try:
-			api.copyToClip(self.lyrics_ctrl.GetValue())
-			ui.message("Copied to clipboard.")
+			api.copyToClip(self.current_plain)
+			ui.message(_("Copied to clipboard."))
 		except Exception as e:
 			handle_error(f"Failed to copy lyrics: {str(e)}")
 

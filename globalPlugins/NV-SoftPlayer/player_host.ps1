@@ -30,6 +30,7 @@ public static class PipeReader {
         return null;
     }
 }
+"@
 $dllCandidates = @(
 	(Join-Path $PSScriptRoot "bin\PipeReader.dll"),
 	(Join-Path $PSScriptRoot "PipeReader.dll")
