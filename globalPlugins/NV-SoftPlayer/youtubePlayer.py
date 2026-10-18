@@ -154,7 +154,10 @@ def _is_wmp_friendly_url(url):
 	return "googlevideo.com" not in u
 
 
-def youtube_search(query, max_results=20):
+_STREAM_CACHE = {}
+
+
+def youtube_search(query, start_index=1, count=25):
 	search_term = (query or "").strip()
 	if not search_term:
 		return None, "Empty search query."
@@ -162,17 +165,19 @@ def youtube_search(query, max_results=20):
 	if is_url:
 		args = list(YT_CLIENT_ARGS) + [
 			"--flat-playlist", "--dump-single-json", "--no-warnings",
-			"--socket-timeout", "15", search_term,
+			"--socket-timeout", "12", search_term,
 		]
 	else:
+		end_index = max(start_index, start_index + count - 1)
 		args = [
-			f"ytsearch{max_results}:{search_term}",
+			f"ytsearch{end_index}:{search_term}",
+			"--playlist-items", f"{start_index}-{end_index}",
 			"--flat-playlist",
 			"--dump-single-json",
 			"--no-warnings",
-			"--socket-timeout", "15",
+			"--socket-timeout", "12",
 		] + list(YT_CLIENT_ARGS)
-	proc, err = _run_ytdlp(args, timeout=60)
+	proc, err = _run_ytdlp(args, timeout=35)
 	if err:
 		return None, err
 	if proc.returncode != 0:
@@ -187,7 +192,7 @@ def youtube_search(query, max_results=20):
 	if entries is None and isinstance(data, dict) and data.get("id"):
 		entries = [data]
 	if not entries:
-		return None, "No YouTube results found."
+		return [], None
 	for entry in entries:
 		if not isinstance(entry, dict):
 			continue
@@ -212,42 +217,67 @@ def youtube_search(query, max_results=20):
 			"url": url,
 			"is_playlist": is_playlist,
 		})
-	if not results:
-		return None, "No playable YouTube results."
 	return results, None
 
 
-def youtube_get_audio_url(page_url):
+def youtube_get_audio_url_and_chapters(page_url):
+	vid = _yt_video_id(page_url)
+	if vid:
+		cached = _cached_media(vid, ("m4a", "mp3", "mp4"))
+		if cached:
+			return cached, [], None
+		now = time.time()
+		if vid in _STREAM_CACHE:
+			cached_url, cached_chapters, exp = _STREAM_CACHE[vid]
+			if now < exp:
+				return cached_url, cached_chapters, None
+
 	args = list(YT_CLIENT_ARGS) + [
-		"-f", YT_AUDIO_FORMAT,
+		"-f", "140/251/ba[ext=m4a]/ba",
 		"-g",
 		"--no-playlist",
 		"--no-warnings",
-		"--socket-timeout", "12",
+		"--socket-timeout", "8",
 		"--retries", "1",
+		"--print", "%(chapters)j",
 		page_url,
 	]
 	proc, err = _run_ytdlp(args, timeout=20)
 	if err:
-		return None, err
+		return None, [], err
 	if proc is None or proc.returncode != 0:
 		err_text = ""
 		if proc is not None:
 			err_text = (proc.stderr or proc.stdout or "").strip()
-		return None, f"Could not extract audio: {(err_text or 'unknown')[:250]}"
-	lines = [
-		ln.strip() for ln in (proc.stdout or "").splitlines()
-		if ln.strip().startswith("http")
-	]
-	if not lines:
-		return None, "No audio stream URL returned."
-	if len(lines) == 1:
-		return lines[0], None
-	audioish = [
-		u for u in lines
-		if "audio" in u.lower() or "m4a" in u.lower() or "mp4a" in u.lower() or "itag=140" in u.lower()
-	]
-	return (audioish[0] if audioish else lines[-1]), None
+		return None, [], f"Could not extract audio: {(err_text or 'unknown')[:250]}"
+
+	chapters = []
+	stream_url = None
+	for line in (proc.stdout or "").splitlines():
+		line = line.strip()
+		if not line:
+			continue
+		if line.startswith("[") and line.endswith("]"):
+			try:
+				parsed = json.loads(line)
+				if isinstance(parsed, list):
+					chapters = parsed
+			except Exception:
+				pass
+		elif line.startswith("http"):
+			stream_url = line
+
+	if not stream_url:
+		return None, [], "No audio stream URL returned."
+
+	if vid:
+		_STREAM_CACHE[vid] = (stream_url, chapters, time.time() + 7200)
+	return stream_url, chapters, None
+
+
+def youtube_get_audio_url(page_url):
+	url, _, err = youtube_get_audio_url_and_chapters(page_url)
+	return url, err
 
 
 def youtube_download_temp(page_url, kind="audio"):
@@ -264,14 +294,14 @@ def youtube_download_temp(page_url, kind="audio"):
 		"--no-playlist",
 		"--no-warnings",
 		"--no-part",
-		"--socket-timeout", "15",
-		"--retries", "2",
+		"--socket-timeout", "12",
+		"--retries", "1",
 		"-o", out_path,
 	]
 	if ffmpeg:
 		args.extend(["--ffmpeg-location", os.path.dirname(ffmpeg)])
 	args.append(page_url)
-	proc, err = _run_ytdlp(args, timeout=90)
+	proc, err = _run_ytdlp(args, timeout=60)
 	if err:
 		return None, err
 	if os.path.isfile(out_path) and os.path.getsize(out_path) > 2048:
@@ -287,10 +317,11 @@ def youtube_download_temp(page_url, kind="audio"):
 
 def youtube_prepare_audio(page_url):
 	vid = _yt_video_id(page_url)
-	cached = _cached_media(vid, ("m4a", "mp3", "mp4"))
-	if cached:
-		return cached, None
-	url, err = youtube_get_audio_url(page_url)
+	if vid:
+		cached = _cached_media(vid, ("m4a", "mp3", "mp4"))
+		if cached:
+			return cached, None
+	url, _, err = youtube_get_audio_url_and_chapters(page_url)
 	if url:
 		return url, None
 	path, error = youtube_download_temp(page_url, kind="audio")
@@ -299,38 +330,72 @@ def youtube_prepare_audio(page_url):
 	return None, err or error or "Could not prepare audio for playback."
 
 
-def youtube_get_video_url(page_url):
+def youtube_get_video_url_and_chapters(page_url):
+	vid = _yt_video_id(page_url)
+	if vid:
+		cached = _cached_media(vid, ("mp4", "mkv"))
+		if cached:
+			return cached, [], None
+		now = time.time()
+		if (vid + "_video") in _STREAM_CACHE:
+			c_url, c_ch, exp = _STREAM_CACHE[vid + "_video"]
+			if now < exp:
+				return c_url, c_ch, None
+
 	args = list(YT_CLIENT_ARGS) + [
 		"-f", YT_VIDEO_FORMAT,
 		"-g",
 		"--no-playlist",
 		"--no-warnings",
-		"--socket-timeout", "12",
+		"--socket-timeout", "10",
 		"--retries", "1",
+		"--print", "%(chapters)j",
 		page_url,
 	]
 	proc, err = _run_ytdlp(args, timeout=20)
 	if err:
-		return None, err
+		return None, [], err
 	if proc is None or proc.returncode != 0:
 		err_text = ""
 		if proc is not None:
 			err_text = (proc.stderr or proc.stdout or "").strip()
-		return None, f"Could not extract video: {(err_text or 'unknown')[:250]}"
-	lines = [
-		ln.strip() for ln in (proc.stdout or "").splitlines()
-		if ln.strip().startswith("http")
-	]
-	if not lines:
-		return None, "No video stream URL returned."
-	return lines[-1] if len(lines) > 1 else lines[0], None
+		return None, [], f"Could not extract video: {(err_text or 'unknown')[:250]}"
+
+	chapters = []
+	video_url = None
+	for line in (proc.stdout or "").splitlines():
+		line = line.strip()
+		if not line:
+			continue
+		if line.startswith("[") and line.endswith("]"):
+			try:
+				parsed = json.loads(line)
+				if isinstance(parsed, list):
+					chapters = parsed
+			except Exception:
+				pass
+		elif line.startswith("http"):
+			video_url = line
+
+	if not video_url:
+		return None, [], "No video stream URL returned."
+
+	if vid:
+		_STREAM_CACHE[vid + "_video"] = (video_url, chapters, time.time() + 7200)
+	return video_url, chapters, None
+
+
+def youtube_get_video_url(page_url):
+	url, _, err = youtube_get_video_url_and_chapters(page_url)
+	return url, err
 
 
 def youtube_prepare_video(page_url):
 	vid = _yt_video_id(page_url)
-	cached = _cached_media(vid, ("mp4", "m4a", "mp3"))
-	if cached:
-		return cached, None
+	if vid:
+		cached = _cached_media(vid, ("mp4", "m4a", "mp3"))
+		if cached:
+			return cached, None
 	url, _ = youtube_get_video_url(page_url)
 	if url:
 		return url, None
@@ -343,6 +408,9 @@ def youtube_prepare_video(page_url):
 def youtube_get_chapters(page_url):
 	if not page_url:
 		return []
+	vid = _yt_video_id(page_url)
+	if vid and vid in _STREAM_CACHE:
+		return _STREAM_CACHE[vid][1]
 	args = [
 		"--no-playlist",
 		"--no-warnings",
@@ -350,7 +418,7 @@ def youtube_get_chapters(page_url):
 		"--print", "%(chapters)j",
 		page_url,
 	]
-	proc, err = _run_ytdlp(args, timeout=12)
+	proc, err = _run_ytdlp(args, timeout=10)
 	if proc and proc.stdout:
 		for line in proc.stdout.splitlines():
 			line = line.strip()
@@ -613,6 +681,10 @@ class YouTubeDialog(wx.Dialog):
 	def __init__(self, parent, plugin):
 		self.plugin = plugin
 		self.results = []
+		self._current_query = ""
+		self._next_start_index = 26
+		self._is_loading_more = False
+		self._has_more_results = True
 		self._closed = False
 		self._busy = False
 		self._dl_progress = None
@@ -661,6 +733,7 @@ class YouTubeDialog(wx.Dialog):
 		self.dl_mp3_button.Bind(wx.EVT_BUTTON, lambda e: self.on_download("mp3"))
 		self.dl_mp4_button.Bind(wx.EVT_BUTTON, lambda e: self.on_download("mp4"))
 		self.close_button.Bind(wx.EVT_BUTTON, self.on_close)
+		self.list_box.Bind(wx.EVT_LISTBOX, self.on_list_select)
 		self.list_box.Bind(wx.EVT_LISTBOX_DCLICK, self.on_play_audio)
 		self.Bind(wx.EVT_CLOSE, self.on_close)
 		self.Bind(wx.EVT_CHAR_HOOK, self.on_key_down)
@@ -701,6 +774,10 @@ class YouTubeDialog(wx.Dialog):
 		if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and self.list_box.HasFocus():
 			self.on_play_audio(event)
 			return
+		if key == wx.WXK_DOWN and self.list_box.HasFocus():
+			idx = self.list_box.GetSelection()
+			if idx != wx.NOT_FOUND and idx >= len(self.results) - 2:
+				self._load_more_results()
 		event.Skip()
 
 	def _selected(self):
@@ -733,6 +810,10 @@ class YouTubeDialog(wx.Dialog):
 				query = "https://" + query
 			self._open_playlist_dialog(query)
 			return
+		self._current_query = query
+		self._next_start_index = 26
+		self._is_loading_more = False
+		self._has_more_results = True
 		self._set_busy(True, f"Searching YouTube for {query}. This window stays open.")
 		ui.message(f"Searching YouTube for {query}")
 		threading.Thread(target=self._search_worker, args=(query,), daemon=True).start()
@@ -760,7 +841,7 @@ class YouTubeDialog(wx.Dialog):
 			self._download_playlist_url(playlist_url, kind="mp4")
 
 	def _search_worker(self, query):
-		results, error = youtube_search(query, max_results=20)
+		results, error = youtube_search(query, start_index=1, count=25)
 		wx.CallAfter(self._search_done, results, error)
 
 	def _search_done(self, results, error):
@@ -786,6 +867,49 @@ class YouTubeDialog(wx.Dialog):
 		self.status_label.SetLabel(
 			f"{len(self.results)} results. Play audio, play video, or download."
 		)
+		ui.message(f"Found {len(self.results)} YouTube results")
+
+	def on_list_select(self, event):
+		event.Skip()
+		idx = self.list_box.GetSelection()
+		if idx != wx.NOT_FOUND and idx >= len(self.results) - 3:
+			self._load_more_results()
+
+	def _load_more_results(self):
+		if self._closed or self._busy or self._is_loading_more or not self._has_more_results or not self._current_query:
+			return
+		self._is_loading_more = True
+		query = self._current_query
+		start_idx = self._next_start_index
+
+		def worker():
+			more, err = youtube_search(query, start_index=start_idx, count=25)
+			wx.CallAfter(self._more_results_done, more, err)
+
+		threading.Thread(target=worker, daemon=True).start()
+
+	def _more_results_done(self, more_results, error):
+		self._is_loading_more = False
+		if self._closed:
+			return
+		if not more_results:
+			self._has_more_results = False
+			return
+		start_count = len(self.results)
+		for r in more_results:
+			if any(existing.get("id") == r.get("id") for existing in self.results):
+				continue
+			self.results.append(r)
+			dur = f" ({r['duration']}s)" if r.get("duration") else ""
+			kind = " [Playlist]" if r.get("is_playlist") else ""
+			label = f"{r.get('title', 'Untitled')} — {r.get('uploader', '')}{dur}{kind}"
+			self.list_box.Append(label)
+		added = len(self.results) - start_count
+		if added > 0:
+			self._next_start_index += 25
+			ui.message(_("Loaded {count} more videos.").format(count=added))
+		else:
+			self._has_more_results = False
 		ui.message(f"Found {len(self.results)} YouTube results")
 
 	def on_play_audio(self, event):
@@ -838,10 +962,12 @@ class YouTubeDialog(wx.Dialog):
 		page_url = first.get("url") or ""
 		title = first.get("title") or "YouTube track"
 		chapters = first.get("chapters")
-		if chapters is None:
-			chapters = youtube_get_chapters(page_url)
+		media, ch, error = youtube_get_audio_url_and_chapters(page_url)
+		if chapters is None and ch:
+			chapters = ch
 			first["chapters"] = chapters
-		media, error = youtube_prepare_audio(page_url)
+		if not media:
+			media, error = youtube_prepare_audio(page_url)
 		if not media:
 			wx.CallAfter(
 				self._fail,
@@ -851,16 +977,25 @@ class YouTubeDialog(wx.Dialog):
 		stream_urls = [media]
 		titles = [title]
 		wx.CallAfter(self._start_audio_player, list(stream_urls), list(titles), chapters)
-		for item in items[1:]:
-			page_url = item.get("url") or ""
-			if not page_url:
-				continue
-			more, err = youtube_prepare_audio(page_url)
-			if more:
-				stream_urls.append(more)
-				titles.append(item.get("title") or "YouTube track")
-		if len(stream_urls) > 1:
-			wx.CallAfter(self._extend_player_queue, stream_urls, titles)
+		if len(items) > 1:
+			def _resolve_queue():
+				q_urls = list(stream_urls)
+				q_titles = list(titles)
+				for item in items[1:]:
+					if self._closed:
+						break
+					u = item.get("url") or ""
+					if not u:
+						continue
+					m, _, _ = youtube_get_audio_url_and_chapters(u)
+					if not m:
+						m, _ = youtube_prepare_audio(u)
+					if m:
+						q_urls.append(m)
+						q_titles.append(item.get("title") or "YouTube track")
+				if len(q_urls) > 1:
+					wx.CallAfter(self._extend_player_queue, q_urls, q_titles)
+			threading.Thread(target=_resolve_queue, daemon=True).start()
 
 	def _extend_player_queue(self, stream_urls, titles):
 		if self._closed or not self.plugin or not getattr(self.plugin, "_playerDialog", None):
@@ -921,35 +1056,48 @@ class YouTubeDialog(wx.Dialog):
 		page_url = first.get("url") or ""
 		title = first.get("title") or "YouTube video"
 		chapters = first.get("chapters")
-		if chapters is None:
-			chapters = youtube_get_chapters(page_url)
+		media, ch, error = youtube_get_video_url_and_chapters(page_url)
+		if chapters is None and ch:
+			chapters = ch
 			first["chapters"] = chapters
-		media, error = youtube_prepare_video(page_url)
+		if not media:
+			media, error = youtube_prepare_video(page_url)
 		if not media:
 			wx.CallAfter(self._fail, error or _("Could not prepare any video."))
 			return
 		stream_urls = [media]
 		titles = [title]
 		wx.CallAfter(self._start_video_player, media, title, chapters)
-		for item in items[1:]:
-			u = item.get("url") or ""
-			if not u:
-				continue
-			more, _ = youtube_prepare_video(u)
-			if more:
-				stream_urls.append(more)
-				titles.append(item.get("title") or "YouTube video")
-		if len(stream_urls) > 1:
-			wx.CallAfter(self._extend_player_queue, stream_urls, titles)
+		if len(items) > 1:
+			def _resolve_vqueue():
+				q_urls = list(stream_urls)
+				q_titles = list(titles)
+				for item in items[1:]:
+					if self._closed:
+						break
+					u = item.get("url") or ""
+					if not u:
+						continue
+					m, _, _ = youtube_get_video_url_and_chapters(u)
+					if not m:
+						m, _ = youtube_prepare_video(u)
+					if m:
+						q_urls.append(m)
+						q_titles.append(item.get("title") or "YouTube video")
+				if len(q_urls) > 1:
+					wx.CallAfter(self._extend_player_queue, q_urls, q_titles)
+			threading.Thread(target=_resolve_vqueue, daemon=True).start()
 
 	def _play_video_worker(self, item):
 		page_url = item.get("url") or ""
 		title = item.get("title") or "YouTube video"
 		chapters = item.get("chapters")
-		if chapters is None:
-			chapters = youtube_get_chapters(page_url)
+		media, ch, error = youtube_get_video_url_and_chapters(page_url)
+		if chapters is None and ch:
+			chapters = ch
 			item["chapters"] = chapters
-		media, error = youtube_prepare_video(page_url)
+		if not media:
+			media, error = youtube_prepare_video(page_url)
 		if error or not media:
 			wx.CallAfter(self._fail, error or _("Could not extract video."))
 			return

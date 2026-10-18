@@ -1039,7 +1039,7 @@ class LyricsDialog(wx.Dialog):
 		self.profound_button = wx.Button(self.panel, label=_("Profound Translation"))
 		self.artist_button = wx.Button(self.panel, label=_("Artist details"))
 		self.news_button = wx.Button(self.panel, label=_("Latest Artist News"))
-		self.html_button = wx.Button(self.panel, label=_("HTML View"))
+		self.html_button = wx.Button(self.panel, label=_("HTML View (Browse Mode)"))
 		self.copy_button = wx.Button(self.panel, label=_("Copy Text"))
 		self.close_button = wx.Button(self.panel, wx.ID_CLOSE, label="&Close")
 		self.button_sizer.Add(self.back_button, 0, wx.ALL, 4)
@@ -1578,6 +1578,9 @@ class LyricsDialog(wx.Dialog):
 			return
 		if key == wx.WXK_ESCAPE:
 			self.on_close(event)
+			return
+		if (event.AltDown() and key in (ord('H'), ord('h'), ord('B'), ord('b'))) or (event.ControlDown() and key in (ord('H'), ord('h'))):
+			self.on_browse_html(event)
 			return
 		event.Skip()
 

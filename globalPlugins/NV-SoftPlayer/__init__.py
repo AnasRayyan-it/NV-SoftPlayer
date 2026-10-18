@@ -430,13 +430,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		dlg.query_ctrl.SetFocus()
 
 	def _showYouTubeDialog(self):
-		if not _find_ytdlp():
-			handle_error(
-				"yt-dlp was not found. Place the Windows x64 yt-dlp.exe "
-				"(not arm64) in globalPlugins/NV-SoftPlayer/bin/ then restart NVDA. "
-				"Download: https://github.com/yt-dlp/yt-dlp/releases/latest"
-			)
-			return
 		try:
 			if self._youtubeDialog:
 				self._youtubeDialog.Raise()

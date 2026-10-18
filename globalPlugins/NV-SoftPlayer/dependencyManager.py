@@ -9,6 +9,7 @@ import os
 import sys
 import shutil
 import zipfile
+import gzip
 import urllib.request
 import urllib.error
 import threading
@@ -32,6 +33,7 @@ YTDLP_URLS = [
 ]
 
 FFMPEG_URLS = [
+	"https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.gz",
 	"https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
 	"https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
 ]
@@ -113,9 +115,11 @@ def download_and_extract_ffmpeg(target_dir, progress_cb=None, is_cancelled=None)
 	dest = os.path.join(target_dir, "ffmpeg.exe")
 	if os.path.isfile(dest) and os.path.getsize(dest) > 1024 * 1024:
 		return dest, None
-	tmp_zip = os.path.join(target_dir, "ffmpeg_dl.zip")
 	last_err = None
 	for url in FFMPEG_URLS:
+		is_gz = url.endswith(".gz")
+		tmp_archive = os.path.join(target_dir, "ffmpeg_dl.gz" if is_gz else "ffmpeg_dl.zip")
+		tmp_dest = dest + ".tmp"
 		try:
 			if progress_cb:
 				progress_cb(0, _("Connecting to download ffmpeg..."))
@@ -123,7 +127,7 @@ def download_and_extract_ffmpeg(target_dir, progress_cb=None, is_cancelled=None)
 			with urllib.request.urlopen(req, timeout=60) as resp:
 				total = int(resp.headers.get("Content-Length") or 0)
 				downloaded = 0
-				with open(tmp_zip, "wb") as f:
+				with open(tmp_archive, "wb") as f:
 					while True:
 						if is_cancelled and is_cancelled():
 							return None, _("Download cancelled.")
@@ -137,37 +141,47 @@ def download_and_extract_ffmpeg(target_dir, progress_cb=None, is_cancelled=None)
 							mb_down = downloaded // (1024 * 1024)
 							mb_total = total // (1024 * 1024)
 							progress_cb(pct, f"ffmpeg: {pct}% ({mb_down}MB / {mb_total}MB)")
-			if os.path.isfile(tmp_zip) and os.path.getsize(tmp_zip) > 1024 * 1024:
+			if os.path.isfile(tmp_archive) and os.path.getsize(tmp_archive) > 1024 * 1024:
 				if progress_cb:
 					progress_cb(None, _("Extracting ffmpeg.exe... Please wait."))
-				extracted = False
-				with zipfile.ZipFile(tmp_zip, "r") as z:
-					for name in z.namelist():
-						if os.path.basename(name).lower() == "ffmpeg.exe":
-							tmp_dest = dest + ".tmp"
-							with z.open(name) as src, open(tmp_dest, "wb") as dst:
-								shutil.copyfileobj(src, dst)
-							if os.path.isfile(tmp_dest) and os.path.getsize(tmp_dest) > 1024 * 1024:
-								if os.path.isfile(dest):
-									try:
-										os.remove(dest)
-									except Exception:
-										pass
-								os.replace(tmp_dest, dest)
-								extracted = True
-							break
-				if extracted:
-					return dest, None
-				last_err = _("ffmpeg.exe was not found inside the downloaded archive.")
+				if is_gz:
+					with gzip.open(tmp_archive, "rb") as f_in, open(tmp_dest, "wb") as f_out:
+						shutil.copyfileobj(f_in, f_out)
+					if os.path.isfile(tmp_dest) and os.path.getsize(tmp_dest) > 1024 * 1024:
+						if os.path.isfile(dest):
+							try:
+								os.remove(dest)
+							except Exception:
+								pass
+						os.replace(tmp_dest, dest)
+						return dest, None
+				else:
+					extracted = False
+					with zipfile.ZipFile(tmp_archive, "r") as z:
+						for name in z.namelist():
+							if os.path.basename(name).lower() == "ffmpeg.exe":
+								with z.open(name) as src, open(tmp_dest, "wb") as dst:
+									shutil.copyfileobj(src, dst)
+								if os.path.isfile(tmp_dest) and os.path.getsize(tmp_dest) > 1024 * 1024:
+									if os.path.isfile(dest):
+										try:
+											os.remove(dest)
+										except Exception:
+											pass
+									os.replace(tmp_dest, dest)
+									extracted = True
+								break
+					if extracted:
+						return dest, None
+				last_err = _("ffmpeg.exe was not extracted properly.")
 		except Exception as e:
 			last_err = f"ffmpeg error: {e}"
 		finally:
-			if os.path.isfile(tmp_zip):
+			if os.path.isfile(tmp_archive):
 				try:
-					os.remove(tmp_zip)
+					os.remove(tmp_archive)
 				except Exception:
 					pass
-			tmp_dest = dest + ".tmp"
 			if os.path.isfile(tmp_dest):
 				try:
 					os.remove(tmp_dest)
@@ -271,6 +285,10 @@ class DependencySetupDialog(wx.Dialog):
 		if self._cancelled:
 			return
 		ui.message(_("YouTube components installed successfully! Opening player..."))
+		try:
+			self.EndModal(wx.ID_OK)
+		except Exception:
+			pass
 		self.Destroy()
 		if self.on_finished_cb:
 			self.on_finished_cb()
@@ -279,11 +297,19 @@ class DependencySetupDialog(wx.Dialog):
 		if self._cancelled:
 			return
 		handle_error(f"{_('Failed to download components')}: {error_msg}")
+		try:
+			self.EndModal(wx.ID_CANCEL)
+		except Exception:
+			pass
 		self.Destroy()
 
 	def on_cancel(self, event=None):
 		self._cancelled = True
 		ui.message(_("Setup cancelled."))
+		try:
+			self.EndModal(wx.ID_CANCEL)
+		except Exception:
+			pass
 		self.Destroy()
 
 

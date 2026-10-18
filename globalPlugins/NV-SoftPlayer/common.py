@@ -593,24 +593,52 @@ def _plugin_dir():
 
 def _addon_bin_dirs():
 	dirs = []
+	here = os.path.dirname(os.path.abspath(__file__))
+	dirs.append(os.path.join(here, "bin"))
+	dirs.append(here)
+	parent = os.path.dirname(here)
+	dirs.append(os.path.join(parent, "bin"))
+	dirs.append(parent)
+	grandparent = os.path.dirname(parent)
+	dirs.append(os.path.join(grandparent, "bin"))
+	dirs.append(grandparent)
+
 	try:
 		if addonHandler is not None:
 			addon = addonHandler.getCodeAddon()
-			dirs.append(os.path.join(addon.path, "globalPlugins", "NV-SoftPlayer", "bin"))
-			dirs.append(os.path.join(addon.path, "globalPlugins", "nvSoftPlayer", "bin"))
-			dirs.append(os.path.join(addon.path, "bin"))
+			if addon and hasattr(addon, "path"):
+				dirs.append(os.path.join(addon.path, "globalPlugins", "NV-SoftPlayer", "bin"))
+				dirs.append(os.path.join(addon.path, "globalPlugins", "nvSoftPlayer", "bin"))
+				dirs.append(os.path.join(addon.path, "bin"))
+				dirs.append(addon.path)
 	except Exception:
 		pass
-	here = _plugin_dir()
-	dirs.append(os.path.join(here, "bin"))
-	dirs.append(here)
+
+	appdata = os.environ.get("APPDATA")
+	if appdata:
+		dirs.append(os.path.join(appdata, "nvda", "addons", "NV-SoftPlayer", "globalPlugins", "NV-SoftPlayer", "bin"))
+		dirs.append(os.path.join(appdata, "nvda", "addons", "NV-SoftPlayer", "bin"))
+		dirs.append(os.path.join(appdata, "nvda", "addons", "NV-SoftPlayer"))
+
 	local_app_data = os.environ.get("LOCALAPPDATA")
 	if local_app_data:
 		dirs.append(os.path.join(local_app_data, "NV-SoftPlayer", "bin"))
+		dirs.append(os.path.join(local_app_data, "NV-SoftPlayer"))
+
 	temp_dir = os.environ.get("TEMP")
 	if temp_dir:
 		dirs.append(os.path.join(temp_dir, "nvSoftPlayer", "bin"))
-	return dirs
+		dirs.append(os.path.join(temp_dir, "nvSoftPlayer"))
+
+	unique_dirs = []
+	seen = set()
+	for d in dirs:
+		if d:
+			norm = os.path.normpath(d)
+			if norm not in seen:
+				seen.add(norm)
+				unique_dirs.append(norm)
+	return unique_dirs
 
 
 def _find_powershell():
