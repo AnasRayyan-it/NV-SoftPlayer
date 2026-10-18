@@ -109,11 +109,9 @@ def _run_ytdlp(args, timeout=60):
 
 
 YT_CLIENT_ARGS = [
-	"--extractor-args",
-	"youtube:player_client=android,web",
 	"--no-check-formats",
 ]
-YT_AUDIO_FORMAT = "140/139/bestaudio[ext=m4a]/ba[ext=m4a]/ba/18"
+YT_AUDIO_FORMAT = "140/139/bestaudio[ext=m4a]/ba[ext=m4a]/18/best[ext=mp4]/best"
 YT_VIDEO_FORMAT = "18/22/17/best[ext=mp4][protocol^=https]/best[ext=mp4]/best"
 
 
@@ -233,11 +231,11 @@ def youtube_get_audio_url_and_chapters(page_url):
 				return cached_url, cached_chapters, None
 
 	args = list(YT_CLIENT_ARGS) + [
-		"-f", "140/251/ba[ext=m4a]/ba",
+		"-f", YT_AUDIO_FORMAT,
 		"-g",
 		"--no-playlist",
 		"--no-warnings",
-		"--socket-timeout", "8",
+		"--socket-timeout", "10",
 		"--retries", "1",
 		"--print", "%(chapters)j",
 		page_url,
@@ -682,7 +680,6 @@ class YouTubeDialog(wx.Dialog):
 		self.plugin = plugin
 		self.results = []
 		self._current_query = ""
-		self._next_start_index = 26
 		self._is_loading_more = False
 		self._has_more_results = True
 		self._closed = False
@@ -711,10 +708,12 @@ class YouTubeDialog(wx.Dialog):
 		self.play_audio_button = wx.Button(panel, label=_("Play &audio"))
 		self.play_video_button = wx.Button(panel, label=_("Play &video"))
 		self.play_queue_button = wx.Button(panel, label=_("Play as queue"))
+		self.load_more_button = wx.Button(panel, label=_("Load &more"))
 		row1.Add(self.search_button, 0, wx.ALL, 4)
 		row1.Add(self.play_audio_button, 0, wx.ALL, 4)
 		row1.Add(self.play_video_button, 0, wx.ALL, 4)
 		row1.Add(self.play_queue_button, 0, wx.ALL, 4)
+		row1.Add(self.load_more_button, 0, wx.ALL, 4)
 		main_sizer.Add(row1, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 		row2 = wx.BoxSizer(wx.HORIZONTAL)
 		self.dl_mp3_button = wx.Button(panel, label=_("Download MP3"))
@@ -730,6 +729,7 @@ class YouTubeDialog(wx.Dialog):
 		self.play_audio_button.Bind(wx.EVT_BUTTON, self.on_play_audio)
 		self.play_video_button.Bind(wx.EVT_BUTTON, self.on_play_video)
 		self.play_queue_button.Bind(wx.EVT_BUTTON, self.on_play_queue)
+		self.load_more_button.Bind(wx.EVT_BUTTON, lambda e: self._load_more_results(manual=True))
 		self.dl_mp3_button.Bind(wx.EVT_BUTTON, lambda e: self.on_download("mp3"))
 		self.dl_mp4_button.Bind(wx.EVT_BUTTON, lambda e: self.on_download("mp4"))
 		self.close_button.Bind(wx.EVT_BUTTON, self.on_close)
@@ -771,13 +771,16 @@ class YouTubeDialog(wx.Dialog):
 		if alt_down and key in (ord('V'), ord('v')):
 			self.on_play_video(event)
 			return
-		if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and self.list_box.HasFocus():
+		if alt_down and key in (ord('M'), ord('m')):
+			self._load_more_results(manual=True)
+			return
+		if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and (self.list_box.HasFocus() or self.FindFocus() == self.list_box):
 			self.on_play_audio(event)
 			return
-		if key == wx.WXK_DOWN and self.list_box.HasFocus():
+		if key == wx.WXK_DOWN and (self.list_box.HasFocus() or self.FindFocus() == self.list_box):
 			idx = self.list_box.GetSelection()
-			if idx != wx.NOT_FOUND and idx >= len(self.results) - 2:
-				self._load_more_results()
+			if idx != wx.NOT_FOUND and idx >= len(self.results) - 5:
+				self._load_more_results(manual=False)
 		event.Skip()
 
 	def _selected(self):
@@ -792,6 +795,8 @@ class YouTubeDialog(wx.Dialog):
 		self.play_audio_button.Enable(not busy)
 		self.play_video_button.Enable(not busy)
 		self.play_queue_button.Enable(not busy)
+		if hasattr(self, "load_more_button"):
+			self.load_more_button.Enable(not busy)
 		self.dl_mp3_button.Enable(not busy)
 		self.dl_mp4_button.Enable(not busy)
 		if status is not None:
@@ -811,7 +816,6 @@ class YouTubeDialog(wx.Dialog):
 			self._open_playlist_dialog(query)
 			return
 		self._current_query = query
-		self._next_start_index = 26
 		self._is_loading_more = False
 		self._has_more_results = True
 		self._set_busy(True, f"Searching YouTube for {query}. This window stays open.")
@@ -841,7 +845,7 @@ class YouTubeDialog(wx.Dialog):
 			self._download_playlist_url(playlist_url, kind="mp4")
 
 	def _search_worker(self, query):
-		results, error = youtube_search(query, start_index=1, count=25)
+		results, error = youtube_search(query, start_index=1, count=50)
 		wx.CallAfter(self._search_done, results, error)
 
 	def _search_done(self, results, error):
@@ -864,38 +868,70 @@ class YouTubeDialog(wx.Dialog):
 		if labels:
 			self.list_box.SetSelection(0)
 			self.list_box.SetFocus()
+			self._prefetch_item(self.results[0])
 		self.status_label.SetLabel(
 			f"{len(self.results)} results. Play audio, play video, or download."
 		)
 		ui.message(f"Found {len(self.results)} YouTube results")
 
-	def on_list_select(self, event):
-		event.Skip()
-		idx = self.list_box.GetSelection()
-		if idx != wx.NOT_FOUND and idx >= len(self.results) - 3:
-			self._load_more_results()
-
-	def _load_more_results(self):
-		if self._closed or self._busy or self._is_loading_more or not self._has_more_results or not self._current_query:
+	def _prefetch_item(self, item):
+		if not item or item.get("is_playlist"):
 			return
-		self._is_loading_more = True
-		query = self._current_query
-		start_idx = self._next_start_index
+		page_url = item.get("url") or ""
+		vid = _yt_video_id(page_url)
+		if not vid or vid in _STREAM_CACHE:
+			return
 
 		def worker():
-			more, err = youtube_search(query, start_index=start_idx, count=25)
-			wx.CallAfter(self._more_results_done, more, err)
+			try:
+				youtube_get_audio_url_and_chapters(page_url)
+			except Exception:
+				pass
 
 		threading.Thread(target=worker, daemon=True).start()
 
-	def _more_results_done(self, more_results, error):
+	def on_list_select(self, event):
+		event.Skip()
+		item = self._selected()
+		if item:
+			self._prefetch_item(item)
+		idx = self.list_box.GetSelection()
+		if idx != wx.NOT_FOUND and idx >= len(self.results) - 5:
+			self._load_more_results(manual=False)
+
+	def _load_more_results(self, manual=False):
+		if self._closed or self._busy or self._is_loading_more or not self._has_more_results or not self._current_query:
+			if manual and not self._has_more_results:
+				ui.message(_("No more results available."))
+			return
+		self._is_loading_more = True
+		query = self._current_query
+		start_idx = len(self.results) + 1
+		count = 50
+		if manual:
+			ui.message(_("Loading more videos..."))
+		self.status_label.SetLabel(_("Loading more videos..."))
+
+		def worker():
+			more, err = youtube_search(query, start_index=start_idx, count=count)
+			wx.CallAfter(self._more_results_done, more, err, manual)
+
+		threading.Thread(target=worker, daemon=True).start()
+
+	def _more_results_done(self, more_results, error, manual=False):
 		self._is_loading_more = False
 		if self._closed:
 			return
 		if not more_results:
 			self._has_more_results = False
+			self.status_label.SetLabel(
+				_("{total} results. End of results.").format(total=len(self.results))
+			)
+			if manual:
+				ui.message(_("No more videos found."))
 			return
 		start_count = len(self.results)
+		labels_to_append = []
 		for r in more_results:
 			if any(existing.get("id") == r.get("id") for existing in self.results):
 				continue
@@ -903,14 +939,23 @@ class YouTubeDialog(wx.Dialog):
 			dur = f" ({r['duration']}s)" if r.get("duration") else ""
 			kind = " [Playlist]" if r.get("is_playlist") else ""
 			label = f"{r.get('title', 'Untitled')} — {r.get('uploader', '')}{dur}{kind}"
-			self.list_box.Append(label)
-		added = len(self.results) - start_count
+			labels_to_append.append(label)
+		for lbl in labels_to_append:
+			self.list_box.Append(lbl)
+		added = len(labels_to_append)
+		total = len(self.results)
 		if added > 0:
-			self._next_start_index += 25
-			ui.message(_("Loaded {count} more videos.").format(count=added))
+			self.status_label.SetLabel(
+				_("{total} results. Play audio, play video, or download.").format(total=total)
+			)
+			ui.message(_("Loaded {count} more videos. Total {total}.").format(count=added, total=total))
 		else:
 			self._has_more_results = False
-		ui.message(f"Found {len(self.results)} YouTube results")
+			self.status_label.SetLabel(
+				_("{total} results. End of results.").format(total=total)
+			)
+			if manual:
+				ui.message(_("No more videos found."))
 
 	def on_play_audio(self, event):
 		if self._busy:
