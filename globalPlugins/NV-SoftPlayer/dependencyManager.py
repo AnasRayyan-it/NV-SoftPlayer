@@ -7,6 +7,7 @@ to the add-on's bin folder when the YouTube player is opened for the first time.
 
 import os
 import sys
+import subprocess
 import shutil
 import zipfile
 import gzip
@@ -26,7 +27,25 @@ from .common import (
 	_find_ytdlp,
 	_addon_bin_dirs,
 	_plugin_dir,
+	_creation_flags,
 )
+
+
+def _verify_binary(path, flag="--version"):
+	"""Test if an executable file actually runs and exits with code 0 on this system."""
+	if not path or not os.path.isfile(path) or os.path.getsize(path) < 1024 * 1024:
+		return False
+	try:
+		p = subprocess.run(
+			[path, flag],
+			stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE,
+			timeout=8,
+			creationflags=_creation_flags(),
+		)
+		return p.returncode == 0
+	except Exception:
+		return False
 
 YTDLP_URLS = [
 	"https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
@@ -64,7 +83,7 @@ def get_target_bin_dir():
 def download_ytdlp(target_dir, progress_cb=None, is_cancelled=None):
 	"""Download yt-dlp.exe into target_dir."""
 	dest = os.path.join(target_dir, "yt-dlp.exe")
-	if os.path.isfile(dest) and os.path.getsize(dest) > 1024 * 1024:
+	if _verify_binary(dest, "--version"):
 		return dest, None
 	tmp = dest + ".download"
 	last_err = None
@@ -91,6 +110,9 @@ def download_ytdlp(target_dir, progress_cb=None, is_cancelled=None):
 							mb_total = total // (1024 * 1024)
 							progress_cb(pct, f"yt-dlp: {pct}% ({mb_down}MB / {mb_total}MB)")
 			if os.path.isfile(tmp) and os.path.getsize(tmp) > 1024 * 1024:
+				if not _verify_binary(tmp, "--version"):
+					last_err = _("Downloaded yt-dlp is not compatible with your Windows system.")
+					continue
 				if os.path.isfile(dest):
 					try:
 						os.remove(dest)
@@ -113,7 +135,7 @@ def download_ytdlp(target_dir, progress_cb=None, is_cancelled=None):
 def download_and_extract_ffmpeg(target_dir, progress_cb=None, is_cancelled=None):
 	"""Download ffmpeg archive and extract ffmpeg.exe into target_dir."""
 	dest = os.path.join(target_dir, "ffmpeg.exe")
-	if os.path.isfile(dest) and os.path.getsize(dest) > 1024 * 1024:
+	if _verify_binary(dest, "-version"):
 		return dest, None
 	last_err = None
 	for url in FFMPEG_URLS:
@@ -147,7 +169,7 @@ def download_and_extract_ffmpeg(target_dir, progress_cb=None, is_cancelled=None)
 				if is_gz:
 					with gzip.open(tmp_archive, "rb") as f_in, open(tmp_dest, "wb") as f_out:
 						shutil.copyfileobj(f_in, f_out)
-					if os.path.isfile(tmp_dest) and os.path.getsize(tmp_dest) > 1024 * 1024:
+					if _verify_binary(tmp_dest, "-version"):
 						if os.path.isfile(dest):
 							try:
 								os.remove(dest)
@@ -162,7 +184,7 @@ def download_and_extract_ffmpeg(target_dir, progress_cb=None, is_cancelled=None)
 							if os.path.basename(name).lower() == "ffmpeg.exe":
 								with z.open(name) as src, open(tmp_dest, "wb") as dst:
 									shutil.copyfileobj(src, dst)
-								if os.path.isfile(tmp_dest) and os.path.getsize(tmp_dest) > 1024 * 1024:
+								if _verify_binary(tmp_dest, "-version"):
 									if os.path.isfile(dest):
 										try:
 											os.remove(dest)
@@ -173,7 +195,7 @@ def download_and_extract_ffmpeg(target_dir, progress_cb=None, is_cancelled=None)
 								break
 					if extracted:
 						return dest, None
-				last_err = _("ffmpeg.exe was not extracted properly.")
+				last_err = _("ffmpeg.exe was not extracted properly or is not executable.")
 		except Exception as e:
 			last_err = f"ffmpeg error: {e}"
 		finally:

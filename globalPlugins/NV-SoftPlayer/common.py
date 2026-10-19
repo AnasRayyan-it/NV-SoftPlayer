@@ -657,9 +657,12 @@ def _find_ffmpeg():
 	for folder in _addon_bin_dirs():
 		for name in ("ffmpeg.exe", "affmpeg.exe", "ffmpeg"):
 			path = os.path.join(folder, name)
-			if os.path.isfile(path):
+			if os.path.isfile(path) and os.path.getsize(path) > 1024 * 1024:
 				return path
-	return shutil.which("ffmpeg.exe") or shutil.which("ffmpeg")
+	which = shutil.which("ffmpeg.exe") or shutil.which("ffmpeg")
+	if which and os.path.isfile(which) and os.path.getsize(which) > 1024 * 1024:
+		return which
+	return None
 
 
 def _find_ytdlp():
@@ -669,11 +672,11 @@ def _find_ytdlp():
 		for name in exe_names:
 			candidates.append(os.path.join(folder, name))
 	for path in candidates:
-		if path and os.path.isfile(path):
+		if path and os.path.isfile(path) and os.path.getsize(path) > 1024 * 1024:
 			return [path]
 	for name in exe_names:
 		found = shutil.which(name)
-		if found:
+		if found and os.path.isfile(found) and os.path.getsize(found) > 1024 * 1024:
 			return [found]
 	for py in ("py", "python"):
 		found = shutil.which(py)
