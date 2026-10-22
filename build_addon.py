@@ -96,6 +96,17 @@ def build(bundle_binaries=False):
 			print(f"[Desktop] Copied both packages to Desktop: {dest_addon}")
 		except Exception as e:
 			print(f"[Warning] Could not copy to desktop: {e}")
+
+	release_dir = os.path.join(root_dir, "release")
+	if os.path.isdir(release_dir):
+		rel_addon = os.path.join(release_dir, f"{addon_name}-{addon_version}.nvda-addon")
+		rel_zip = os.path.join(release_dir, f"{addon_name}-{addon_version}.zip")
+		try:
+			shutil.copyfile(output_addon, rel_addon)
+			shutil.copyfile(output_zip, rel_zip)
+			print(f"[Release] Copied both packages to release folder: {rel_addon}")
+		except Exception as e:
+			print(f"[Warning] Could not copy to release folder: {e}")
 	print("=" * 60)
 
 

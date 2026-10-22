@@ -24,11 +24,11 @@ except ImportError:
 
 GITHUB_REPO = "AnasRayyan-it/NV-SoftPlayer"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-USER_AGENT = "NV-SoftPlayer-Updater/2.5"
+USER_AGENT = "NV-SoftPlayer-Updater/2.6"
 
 
 def _parse_version(v_str):
-	"""Parse version strings like '2.5.0' or 'v2.5.1' into comparable tuple of ints."""
+	"""Parse version strings like '2.6.0' or 'v2.6.1' into comparable tuple of ints."""
 	clean = re.sub(r"^[vV]", "", str(v_str or "").strip())
 	parts = []
 	for chunk in clean.split("."):
@@ -60,7 +60,7 @@ def get_current_addon_version():
 						return line.split("=", 1)[1].strip().strip('"').strip("'")
 	except Exception:
 		pass
-	return "2.5.0"
+	return "2.6.0"
 
 
 class UpdatePromptDialog(wx.Dialog):
@@ -99,10 +99,26 @@ class UpdatePromptDialog(wx.Dialog):
 		self.btn_update.Bind(wx.EVT_BUTTON, self.on_update_now)
 		self.btn_remind.Bind(wx.EVT_BUTTON, self.on_remind_later)
 		self.btn_never.Bind(wx.EVT_BUTTON, self.on_never_remind)
+		self.Bind(wx.EVT_CLOSE, self.on_remind_later)
+		self.Bind(wx.EVT_CHAR_HOOK, self.on_key_down)
 
 		self.btn_update.SetDefault()
 		self.btn_update.SetFocus()
 		self.CentreOnScreen()
+
+	def on_key_down(self, event):
+		key = event.GetKeyCode()
+		ctrl_down = event.ControlDown()
+		alt_down = event.AltDown()
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
+			self.on_remind_later(event)
+			return
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
+			return
+		event.Skip()
 
 	def on_update_now(self, event):
 		self.EndModal(wx.ID_OK)

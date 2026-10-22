@@ -53,7 +53,7 @@ except ImportError:
 import wx
 
 ADDON_NAME = "NV-SoftPlayer"
-USER_AGENT = "NV-SoftPlayer/2.5"
+USER_AGENT = "NV-SoftPlayer/2.6"
 
 RTL_LANG_CODES = frozenset(("ar", "he", "fa", "ur", "ps", "ckb", "yi", "ku", "sd", "ug", "dv"))
 
@@ -135,6 +135,9 @@ _UI = {
 		"Play as video": "تشغيل كفيديو",
 		"Download as MP3": "تنزيل كـ MP3",
 		"Download as MP4": "تنزيل كـ MP4",
+		"Mute": "كتم الصوت",
+		"Unmute": "إلغاء كتم الصوت",
+		"Toggle mute": "تبديل كتم الصوت",
 	},
 	"he": {
 		"Ready": "מוכן",
@@ -404,6 +407,7 @@ def load_addon_store():
 		"preferredLanguages": "",
 		"repeatOn": False,
 		"shuffleOn": False,
+		"volume": 100,
 	}
 	for path in (_store_file(), _legacy_store_file()):
 		try:
@@ -426,6 +430,7 @@ def save_addon_store(
 	repeat_on=None,
 	shuffle_on=None,
 	preferred_languages=None,
+	volume=None,
 ):
 	data = load_addon_store()
 	if gemini_api_key is not None:
@@ -442,11 +447,47 @@ def save_addon_store(
 		data["shuffleOn"] = bool(shuffle_on)
 	if preferred_languages is not None:
 		data["preferredLanguages"] = preferred_languages
+	if volume is not None:
+		try:
+			data["volume"] = max(0, min(100, int(volume)))
+		except Exception:
+			pass
 	try:
 		with open(_store_file(), "w", encoding="utf-8") as f:
 			json.dump(data, f, ensure_ascii=False, indent=2)
 	except Exception as e:
 		handle_error(f"Could not save add-on settings to disk: {e}")
+
+
+def get_saved_volume():
+	"""Retrieve the persistently saved player volume (0-100), defaulting to 100."""
+	store = load_addon_store()
+	if "volume" in store and store["volume"] is not None:
+		try:
+			return max(0, min(100, int(store["volume"])))
+		except Exception:
+			pass
+	try:
+		vol = config.conf["nvSoftPlayer"]["volume"]
+		if vol is not None:
+			return max(0, min(100, int(vol)))
+	except Exception:
+		pass
+	return 100
+
+
+def set_saved_volume(volume):
+	"""Persistently save the player volume across audio/video tracks and restarts."""
+	try:
+		val = max(0, min(100, int(volume)))
+	except Exception:
+		val = 100
+	try:
+		config.conf["nvSoftPlayer"]["volume"] = val
+	except Exception:
+		pass
+	save_addon_store(volume=val)
+	return val
 
 
 def _conf_get(key, default=""):
@@ -678,10 +719,6 @@ def _find_ytdlp():
 		found = shutil.which(name)
 		if found and os.path.isfile(found) and os.path.getsize(found) > 1024 * 1024:
 			return [found]
-	for py in ("py", "python"):
-		found = shutil.which(py)
-		if found:
-			return [found, "-m", "yt_dlp"]
 	return None
 
 

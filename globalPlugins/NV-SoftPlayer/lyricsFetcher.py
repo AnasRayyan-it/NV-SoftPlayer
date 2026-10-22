@@ -747,16 +747,32 @@ class LanguageSelectDialog(wx.Dialog):
 		else:
 			self.language_choice.SetSelection(0)
 		sizer.Add(self.language_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
-		button_sizer = wx.StdDialogButtonSizer()
+		button_sizer = wx.BoxSizer(wx.HORIZONTAL)
 		ok_button = wx.Button(panel, wx.ID_OK, label="&OK")
-		cancel_button = wx.Button(panel, wx.ID_CANCEL, label="&Cancel")
-		button_sizer.AddButton(ok_button)
-		button_sizer.AddButton(cancel_button)
-		button_sizer.Realize()
+		cancel_button = wx.Button(panel, wx.ID_ANY, label="&Cancel")
+		button_sizer.Add(ok_button, 0, wx.ALL, 5)
+		button_sizer.Add(cancel_button, 0, wx.ALL, 5)
 		sizer.Add(button_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 10)
 		panel.SetSizer(sizer)
+		cancel_button.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(wx.ID_CANCEL))
+		self.Bind(wx.EVT_CLOSE, lambda e: self.EndModal(wx.ID_CANCEL))
+		self.Bind(wx.EVT_CHAR_HOOK, self.on_key_down)
 		self.language_choice.SetFocus()
 		self.CentreOnParent()
+
+	def on_key_down(self, event):
+		key = event.GetKeyCode()
+		ctrl_down = event.ControlDown()
+		alt_down = event.AltDown()
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
+			self.EndModal(wx.ID_CANCEL)
+			return
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
+			return
+		event.Skip()
 
 	def get_language(self):
 		index = self.language_choice.GetSelection()
@@ -781,7 +797,7 @@ class ManualSearchDialog(wx.Dialog):
 		sizer.Add(self.status_label, 0, wx.EXPAND | wx.ALL, 8)
 		button_sizer = wx.BoxSizer(wx.HORIZONTAL)
 		self.search_button = wx.Button(panel, wx.ID_OK, label="&" + _("Search"))
-		self.cancel_button = wx.Button(panel, wx.ID_CANCEL, label="&" + _("Cancel"))
+		self.cancel_button = wx.Button(panel, wx.ID_ANY, label="&" + _("Cancel"))
 		button_sizer.Add(self.search_button, 0, wx.ALL, 5)
 		button_sizer.Add(self.cancel_button, 0, wx.ALL, 5)
 		sizer.Add(button_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
@@ -830,10 +846,64 @@ class ManualSearchDialog(wx.Dialog):
 		self.close_quietly()
 
 	def on_key_down(self, event):
-		if event.GetKeyCode() == wx.WXK_ESCAPE:
+		key = event.GetKeyCode()
+		ctrl_down = event.ControlDown()
+		alt_down = event.AltDown()
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
 			self.close_quietly()
-		else:
-			event.Skip()
+			return
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
+			return
+		event.Skip()
+
+
+class ResultTextDialog(wx.Dialog):
+	def __init__(self, parent, title, text, size=(640, 480)):
+		super().__init__(parent, title=title, size=size)
+		apply_ui_layout(self)
+		panel = wx.Panel(self)
+		sizer = wx.BoxSizer(wx.VERTICAL)
+		self.ctrl = wx.TextCtrl(
+			panel, value=(text or "").strip(),
+			style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
+		)
+		sizer.Add(self.ctrl, 1, wx.EXPAND | wx.ALL, 10)
+		btn_row = wx.BoxSizer(wx.HORIZONTAL)
+		copy_btn = wx.Button(panel, label="&" + _("Copy"))
+		close_btn = wx.Button(panel, wx.ID_ANY, label="&" + _("Close"))
+		btn_row.Add(copy_btn, 0, wx.ALL, 5)
+		btn_row.Add(close_btn, 0, wx.ALL, 5)
+		sizer.Add(btn_row, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
+		panel.SetSizer(sizer)
+
+		copy_btn.Bind(wx.EVT_BUTTON, self.on_copy)
+		close_btn.Bind(wx.EVT_BUTTON, lambda e: self.Destroy())
+		self.Bind(wx.EVT_CLOSE, lambda e: self.Destroy())
+		self.Bind(wx.EVT_CHAR_HOOK, self.on_key_down)
+
+	def on_copy(self, evt=None):
+		try:
+			api.copyToClip(self.ctrl.GetValue())
+			ui.message(_("Copied to clipboard."))
+		except Exception as e:
+			handle_error(str(e))
+
+	def on_key_down(self, event):
+		key = event.GetKeyCode()
+		ctrl_down = event.ControlDown()
+		alt_down = event.AltDown()
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
+			self.Destroy()
+			return
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
+			return
+		event.Skip()
 
 
 class ArtistDetailsDialog(wx.Dialog):
@@ -957,10 +1027,18 @@ class ArtistDetailsDialog(wx.Dialog):
 		ui.message("Artist details translation completed.")
 
 	def on_key_down(self, event):
-		if event.GetKeyCode() == wx.WXK_ESCAPE:
-			self.on_back(event)
-		else:
-			event.Skip()
+		key = event.GetKeyCode()
+		ctrl_down = event.ControlDown()
+		alt_down = event.AltDown()
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
+			self.on_close(event)
+			return
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
+			return
+		event.Skip()
 
 	def on_close(self, event):
 		if self._closed:
@@ -1201,32 +1279,7 @@ class LyricsDialog(wx.Dialog):
 				self._result_dialog.Destroy()
 		except Exception:
 			pass
-		dlg = wx.Dialog(self, title=f"Selection: {selected[:50]}", size=(640, 480))
-		panel = wx.Panel(dlg)
-		sizer = wx.BoxSizer(wx.VERTICAL)
-		ctrl = wx.TextCtrl(
-			panel, value=(text or "").strip(),
-			style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
-		)
-		sizer.Add(ctrl, 1, wx.EXPAND | wx.ALL, 10)
-		btn_row = wx.BoxSizer(wx.HORIZONTAL)
-		copy_btn = wx.Button(panel, label="&Copy")
-		close_btn = wx.Button(panel, wx.ID_CLOSE, label="&Close")
-		btn_row.Add(copy_btn, 0, wx.ALL, 5)
-		btn_row.Add(close_btn, 0, wx.ALL, 5)
-		sizer.Add(btn_row, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
-		panel.SetSizer(sizer)
-
-		def do_copy(evt):
-			try:
-				api.copyToClip(ctrl.GetValue())
-				ui.message("Copied to clipboard.")
-			except Exception as e:
-				handle_error(str(e))
-
-		copy_btn.Bind(wx.EVT_BUTTON, do_copy)
-		close_btn.Bind(wx.EVT_BUTTON, lambda e: dlg.Destroy())
-		dlg.Bind(wx.EVT_CLOSE, lambda e: dlg.Destroy())
+		dlg = ResultTextDialog(self, title=f"Selection: {selected[:50]}", text=text, size=(640, 480))
 		self._result_dialog = dlg
 
 		def _clear(evt=None):
@@ -1235,7 +1288,7 @@ class LyricsDialog(wx.Dialog):
 		dlg.Bind(wx.EVT_WINDOW_DESTROY, _clear)
 		dlg.Show()
 		dlg.Raise()
-		ctrl.SetFocus()
+		dlg.ctrl.SetFocus()
 		ui.message("Selection translation ready.")
 
 	def on_artist_news(self, event):
@@ -1274,32 +1327,7 @@ class LyricsDialog(wx.Dialog):
 				self._result_dialog.Destroy()
 		except Exception:
 			pass
-		dlg = wx.Dialog(self, title=f"Latest news — {self.artist}", size=(700, 520))
-		panel = wx.Panel(dlg)
-		sizer = wx.BoxSizer(wx.VERTICAL)
-		ctrl = wx.TextCtrl(
-			panel, value=(text or "").strip(),
-			style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
-		)
-		sizer.Add(ctrl, 1, wx.EXPAND | wx.ALL, 10)
-		btn_row = wx.BoxSizer(wx.HORIZONTAL)
-		copy_btn = wx.Button(panel, label="&Copy")
-		close_btn = wx.Button(panel, wx.ID_CLOSE, label="&Close")
-		btn_row.Add(copy_btn, 0, wx.ALL, 5)
-		btn_row.Add(close_btn, 0, wx.ALL, 5)
-		sizer.Add(btn_row, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
-		panel.SetSizer(sizer)
-
-		def do_copy(evt):
-			try:
-				api.copyToClip(ctrl.GetValue())
-				ui.message("Copied to clipboard.")
-			except Exception as e:
-				handle_error(str(e))
-
-		copy_btn.Bind(wx.EVT_BUTTON, do_copy)
-		close_btn.Bind(wx.EVT_BUTTON, lambda e: dlg.Destroy())
-		dlg.Bind(wx.EVT_CLOSE, lambda e: dlg.Destroy())
+		dlg = ResultTextDialog(self, title=f"Latest news — {self.artist}", text=text, size=(700, 520))
 		self._result_dialog = dlg
 
 		def _clear(evt=None):
@@ -1308,7 +1336,7 @@ class LyricsDialog(wx.Dialog):
 		dlg.Bind(wx.EVT_WINDOW_DESTROY, _clear)
 		dlg.Show()
 		dlg.Raise()
-		ctrl.SetFocus()
+		dlg.ctrl.SetFocus()
 		ui.message("Artist news loaded.")
 
 	def on_ask(self, event):
@@ -1364,32 +1392,7 @@ class LyricsDialog(wx.Dialog):
 				self._result_dialog.Destroy()
 		except Exception:
 			pass
-		dlg = wx.Dialog(self, title="Music Q&A answer", size=(640, 420))
-		panel = wx.Panel(dlg)
-		sizer = wx.BoxSizer(wx.VERTICAL)
-		ctrl = wx.TextCtrl(
-			panel, value=(text or "").strip(),
-			style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
-		)
-		sizer.Add(ctrl, 1, wx.EXPAND | wx.ALL, 10)
-		btn_row = wx.BoxSizer(wx.HORIZONTAL)
-		copy_btn = wx.Button(panel, label="&Copy")
-		close_btn = wx.Button(panel, wx.ID_CLOSE, label="&Close")
-		btn_row.Add(copy_btn, 0, wx.ALL, 5)
-		btn_row.Add(close_btn, 0, wx.ALL, 5)
-		sizer.Add(btn_row, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
-		panel.SetSizer(sizer)
-
-		def do_copy(evt):
-			try:
-				api.copyToClip(ctrl.GetValue())
-				ui.message("Copied to clipboard.")
-			except Exception as e:
-				handle_error(str(e))
-
-		copy_btn.Bind(wx.EVT_BUTTON, do_copy)
-		close_btn.Bind(wx.EVT_BUTTON, lambda e: dlg.Destroy())
-		dlg.Bind(wx.EVT_CLOSE, lambda e: dlg.Destroy())
+		dlg = ResultTextDialog(self, title="Music Q&A answer", text=text, size=(640, 420))
 		self._result_dialog = dlg
 
 		def _clear(evt=None):
@@ -1398,7 +1401,7 @@ class LyricsDialog(wx.Dialog):
 		dlg.Bind(wx.EVT_WINDOW_DESTROY, _clear)
 		dlg.Show()
 		dlg.Raise()
-		ctrl.SetFocus()
+		dlg.ctrl.SetFocus()
 		ui.message("Answer ready.")
 
 	def on_artist_details(self, event):
@@ -1571,15 +1574,22 @@ class LyricsDialog(wx.Dialog):
 
 	def on_key_down(self, event):
 		key = event.GetKeyCode()
+		ctrl_down = event.ControlDown()
+		alt_down = event.AltDown()
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
+			self.on_close(event)
+			return
 		if key == wx.WXK_WINDOWS_MENU or (
 			key == wx.WXK_F10 and event.ShiftDown()
 		):
 			self.on_context_menu(event)
 			return
 		if key == wx.WXK_ESCAPE:
-			self.on_close(event)
+			# Do not close on Escape key
 			return
-		if (event.AltDown() and key in (ord('H'), ord('h'), ord('B'), ord('b'))) or (event.ControlDown() and key in (ord('H'), ord('h'))):
+		if (alt_down and key in (ord('H'), ord('h'), ord('B'), ord('b'))) or (ctrl_down and key in (ord('H'), ord('h'))):
 			self.on_browse_html(event)
 			return
 		event.Skip()

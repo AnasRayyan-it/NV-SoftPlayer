@@ -90,6 +90,7 @@ Left Arrow                 Rewind 5 seconds (with smooth audio ducking).
 Right Arrow                Fast-forward 5 seconds (with smooth audio ducking).
 Up Arrow                   Increase player volume by 5% (does not alter NVDA).
 Down Arrow                 Decrease player volume by 5% (down to 0% smoothly).
+M                          Toggle Mute / Unmute.
 R                          Toggle Repeat (track / playlist mode for current session).
 Ctrl + R                   Toggle Repeat and save preference as default.
 S                          Toggle Shuffle (current session).
@@ -97,10 +98,11 @@ Ctrl + S                   Toggle Shuffle and save preference as default.
 T                          Announce current track title and total duration.
 H                          Announce the list of keyboard shortcuts.
 Applications / Shift+F10   Open the Player Context Menu with all controls.
-Escape                     Close the player window and stop playback.
+Ctrl + W or Alt + F4       Close the player window and stop playback.
 
 Note on Volume:
-Player volume is strictly separated from NVDA speech. Even when set to 0%,
+Player volume is strictly separated from NVDA speech and is permanently
+remembered across tracks, videos, and sessions. Even when set to 0% or muted,
 your screen reader speech continues at full volume.
 
 
@@ -249,6 +251,7 @@ Architecture Highlights:
   yt-dlp.exe in the add-on's "globalPlugins\NV-SoftPlayer\bin" directory.
 * For keyboard shortcuts inside the player, press H anytime to hear NVDA read
   the available keys.
-* All dialogs support standard Windows dialog keys (Tab to cycle controls,
-  Escape to close, Alt + underlined letter for shortcuts).
+* All dialogs support standard navigation (Tab to cycle controls, Alt + underlined letter for shortcuts).
+  To prevent accidental loss of progress, dialogs and player windows cannot be closed by pressing Escape alone;
+  use Control + W or Alt + F4 to close.
 ================================================================================

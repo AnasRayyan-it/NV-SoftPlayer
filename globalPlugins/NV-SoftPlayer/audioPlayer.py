@@ -20,6 +20,8 @@ from .common import (
 	get_repeat_on,
 	get_shuffle_on,
 	save_addon_store,
+	get_saved_volume,
+	set_saved_volume,
 	format_time,
 	display_name,
 	get_audio_duration_seconds,
@@ -454,7 +456,10 @@ class NVSoftPlayerDialog(wx.Dialog):
 		self._closed = False
 		self._stop_requested = False
 		self._switching = False
-		self._saved_volume = None
+		self.current_volume = get_saved_volume()
+		self._is_muted = False
+		self._pre_mute_volume = self.current_volume if self.current_volume > 0 else 50
+		self._saved_volume = self.current_volume
 		self._volume_ducked = False
 		self._quiet_open = bool(quiet_open)
 		super().__init__(parent, title="NV-SoftPlayer", size=(720, 420))
@@ -477,11 +482,11 @@ class NVSoftPlayerDialog(wx.Dialog):
 		main_sizer.Add(self.track_list, 1, wx.EXPAND | wx.ALL, 10)
 
 		self._full_help = (
-			"Space play/pause. Z previous. X replay. C stop. V next. "
+			"Space play/pause. M mute/unmute. Z previous. X replay. C stop. V next. "
 			"Left rewind 5 seconds. Right forward 5 seconds. "
 			"Up/Down change player volume only, not NVDA speech. "
 			"R repeat. Ctrl+R save repeat. S shuffle. Ctrl+S save shuffle. "
-			"T duration. Application key or Shift+F10 for menu. Escape close."
+			"T duration. Application key or Shift+F10 for menu. Control+W or Alt+F4 close."
 		)
 		panel.SetSizer(main_sizer)
 		if self.shuffle_on and len(self.queue) > 1:
@@ -609,6 +614,9 @@ class NVSoftPlayerDialog(wx.Dialog):
 		if not ok:
 			handle_error(f"Could not load {self._current_title()}")
 			return False
+		# Ensure the backend volume matches the saved volume for the new audio/video
+		vol_to_apply = 0 if self._is_muted else self.current_volume
+		self.backend.set_volume(vol_to_apply)
 		self._stop_fade(restore=True)
 		name = self._current_title()
 		pos = self.index + 1
@@ -641,16 +649,17 @@ class NVSoftPlayerDialog(wx.Dialog):
 			self.fade_timer.Stop()
 		except Exception:
 			pass
-		if restore and self._volume_ducked and self.backend and self._saved_volume is not None:
-			self.backend.set_volume(self._saved_volume)
+		if restore and self._volume_ducked and self.backend and not self._is_muted:
+			target = self._saved_volume if self._saved_volume is not None else self.current_volume
+			self.backend.set_volume(target)
 		self._volume_ducked = False
 
 	def on_fade_timer(self, event):
-		if self._closed or not self.backend:
+		if self._closed or not self.backend or self._is_muted:
 			self._stop_fade(restore=False)
 			return
 		current = self.backend.get_volume()
-		target = self._saved_volume if self._saved_volume is not None else current
+		target = self._saved_volume if self._saved_volume is not None else self.current_volume
 		if current >= target or target <= 0:
 			self.backend.set_volume(target)
 			self._volume_ducked = False
@@ -661,14 +670,11 @@ class NVSoftPlayerDialog(wx.Dialog):
 		self.fade_timer.Start(SOFT_RESTORE_STEP_MS, oneShot=True)
 
 	def _duck_for_seek(self):
-		if not self.backend:
+		if not self.backend or self._is_muted:
 			return
 		if not self._volume_ducked:
-			try:
-				self._saved_volume = self.backend.get_volume()
-			except Exception:
-				self._saved_volume = 100
-		saved = self._saved_volume if self._saved_volume is not None else 100
+			self._saved_volume = self.current_volume
+		saved = self._saved_volume if self._saved_volume is not None else self.current_volume
 		if saved <= 0:
 			ducked = 0
 		else:
@@ -704,9 +710,13 @@ class NVSoftPlayerDialog(wx.Dialog):
 	def change_volume(self, delta):
 		if not self.backend:
 			return
-		current = self.backend.get_volume()
-		new_vol = max(0, min(100, current + delta))
+		if self._is_muted:
+			self._is_muted = False
+		new_vol = max(0, min(100, self.current_volume + delta))
+		self.current_volume = new_vol
+		self._pre_mute_volume = new_vol if new_vol > 0 else 50
 		self.backend.set_volume(new_vol)
+		set_saved_volume(new_vol)
 		self._saved_volume = new_vol
 		self._volume_ducked = False
 		try:
@@ -714,6 +724,30 @@ class NVSoftPlayerDialog(wx.Dialog):
 		except Exception:
 			pass
 		self.status_label.SetLabel(f"Player volume {new_vol} percent")
+		ui.message(f"{new_vol}%")
+
+	def toggle_mute(self):
+		if not self.backend:
+			return
+		if not self._is_muted:
+			self._is_muted = True
+			self._pre_mute_volume = self.current_volume if self.current_volume > 0 else 50
+			self.backend.set_volume(0)
+			self._stop_fade(restore=False)
+			msg = _("Mute")
+			self.status_label.SetLabel(msg)
+			ui.message(msg)
+		else:
+			self._is_muted = False
+			restored = self._pre_mute_volume if self._pre_mute_volume > 0 else 50
+			self.current_volume = restored
+			self.backend.set_volume(restored)
+			set_saved_volume(restored)
+			self._saved_volume = restored
+			self._stop_fade(restore=False)
+			msg = f"{_('Unmute')}, {restored}%"
+			self.status_label.SetLabel(msg)
+			ui.message(msg)
 
 	def set_chapters(self, chapters):
 		self.chapters = list(chapters) if chapters else []
@@ -910,6 +944,7 @@ class NVSoftPlayerDialog(wx.Dialog):
 		id_stop = wx.NewIdRef()
 		id_repeat = wx.NewIdRef()
 		id_shuffle = wx.NewIdRef()
+		id_mute = wx.NewIdRef()
 		id_dur = wx.NewIdRef()
 		id_help = wx.NewIdRef()
 		id_close = wx.NewIdRef()
@@ -920,6 +955,7 @@ class NVSoftPlayerDialog(wx.Dialog):
 		menu.Append(id_prev, _("Previous track"))
 		menu.Append(id_next, _("Next track"))
 		menu.AppendSeparator()
+		menu.Append(id_mute, _("Toggle mute"))
 		menu.Append(id_repeat, _("Toggle repeat"))
 		menu.Append(id_shuffle, _("Toggle shuffle"))
 		menu.Append(id_dur, _("Announce duration"))
@@ -932,6 +968,7 @@ class NVSoftPlayerDialog(wx.Dialog):
 		self.Bind(wx.EVT_MENU, lambda e: self.stop_playback(), id=id_stop)
 		self.Bind(wx.EVT_MENU, lambda e: self.play_previous(), id=id_prev)
 		self.Bind(wx.EVT_MENU, lambda e: self.play_next(), id=id_next)
+		self.Bind(wx.EVT_MENU, lambda e: self.toggle_mute(), id=id_mute)
 		self.Bind(wx.EVT_MENU, lambda e: self.toggle_repeat(persist=False), id=id_repeat)
 		self.Bind(wx.EVT_MENU, lambda e: self.toggle_shuffle(persist=False), id=id_shuffle)
 		self.Bind(wx.EVT_MENU, lambda e: self.announce_duration(), id=id_dur)
@@ -944,18 +981,25 @@ class NVSoftPlayerDialog(wx.Dialog):
 			menu.Destroy()
 
 	def on_key_down(self, event):
-		if event.AltDown() or event.MetaDown():
+		ctrl = event.ControlDown()
+		alt = event.AltDown()
+		key = event.GetKeyCode()
+		# Close only with Ctrl+W or Alt+F4
+		if (ctrl and not alt and key in (ord("W"), ord("w"))) or (
+			alt and not ctrl and key == wx.WXK_F4
+		):
+			self.on_close(event)
+			return
+		if alt or event.MetaDown():
 			event.Skip()
 			return
-		ctrl = event.ControlDown()
-		key = event.GetKeyCode()
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
+			return
 		if key == wx.WXK_WINDOWS_MENU or (
 			key == wx.WXK_F10 and event.ShiftDown()
 		):
 			self.on_player_context_menu(event)
-			return
-		if key == wx.WXK_ESCAPE:
-			self.on_close(event)
 			return
 		if ctrl and key in (ord("R"), ord("r")):
 			self.toggle_repeat(persist=True)
@@ -965,6 +1009,9 @@ class NVSoftPlayerDialog(wx.Dialog):
 			return
 		if ctrl:
 			event.Skip()
+			return
+		if key in (ord("M"), ord("m")):
+			self.toggle_mute()
 			return
 		if key == wx.WXK_SPACE:
 			self.toggle_play_pause()

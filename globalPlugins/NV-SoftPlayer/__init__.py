@@ -64,6 +64,7 @@ config.conf.spec["nvSoftPlayer"] = {
 	"preferredLanguages": 'string(default="Arabic,English")',
 	"repeatOn": "boolean(default=False)",
 	"shuffleOn": "boolean(default=False)",
+	"volume": "integer(default=100, min=0, max=100)",
 	"suppressUpdates": "boolean(default=False)",
 	"remindAfter": "float(default=0.0)",
 }

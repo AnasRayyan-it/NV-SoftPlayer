@@ -643,7 +643,7 @@ class YouTubePlaylistActionDialog(wx.Dialog):
 		main_sizer.Add(btn_sizer2, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
 
 		close_sizer = wx.BoxSizer(wx.HORIZONTAL)
-		self.cancel_btn = wx.Button(panel, wx.ID_CANCEL, label=_("Cancel"))
+		self.cancel_btn = wx.Button(panel, wx.ID_ANY, label=_("Cancel"))
 		close_sizer.Add(self.cancel_btn, 0, wx.ALL, 6)
 		main_sizer.Add(close_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 6)
 
@@ -661,8 +661,16 @@ class YouTubePlaylistActionDialog(wx.Dialog):
 		self.CentreOnParent()
 
 	def on_key_down(self, event):
-		if event.GetKeyCode() == wx.WXK_ESCAPE:
+		key = event.GetKeyCode()
+		ctrl_down = event.ControlDown()
+		alt_down = event.AltDown()
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
 			self.on_cancel(event)
+			return
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
 			return
 		event.Skip()
 
@@ -744,8 +752,14 @@ class YouTubeDialog(wx.Dialog):
 		key = event.GetKeyCode()
 		alt_down = event.AltDown()
 		ctrl_down = event.ControlDown()
-		if key == wx.WXK_ESCAPE:
+		# Close only with Ctrl+W or Alt+F4
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
 			self.on_close(event)
+			return
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
 			return
 
 		# Item 7: Quick navigation: E or Shift + E focuses the search field

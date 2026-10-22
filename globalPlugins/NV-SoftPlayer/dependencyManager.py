@@ -40,7 +40,7 @@ def _verify_binary(path, flag="--version"):
 			[path, flag],
 			stdout=subprocess.PIPE,
 			stderr=subprocess.PIPE,
-			timeout=8,
+			timeout=15,
 			creationflags=_creation_flags(),
 		)
 		return p.returncode == 0
@@ -49,6 +49,7 @@ def _verify_binary(path, flag="--version"):
 
 YTDLP_URLS = [
 	"https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
+	"https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.exe",
 ]
 
 FFMPEG_URLS = [
@@ -85,7 +86,7 @@ def download_ytdlp(target_dir, progress_cb=None, is_cancelled=None):
 	dest = os.path.join(target_dir, "yt-dlp.exe")
 	if _verify_binary(dest, "--version"):
 		return dest, None
-	tmp = dest + ".download"
+	tmp = dest + ".tmp.exe"
 	last_err = None
 	for url in YTDLP_URLS:
 		try:
@@ -246,16 +247,31 @@ class DependencySetupDialog(wx.Dialog):
 		sizer.Add(self.gauge, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
 
 		btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-		self.cancel_btn = wx.Button(panel, wx.ID_CANCEL, label=_("Cancel"))
+		self.cancel_btn = wx.Button(panel, wx.ID_ANY, label=_("Cancel"))
 		btn_sizer.Add(self.cancel_btn, 0, wx.ALL, 4)
 		sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
 
 		panel.SetSizer(sizer)
 		self.cancel_btn.Bind(wx.EVT_BUTTON, self.on_cancel)
 		self.Bind(wx.EVT_CLOSE, self.on_cancel)
+		self.Bind(wx.EVT_CHAR_HOOK, self.on_key_down)
 		self.CentreOnScreen()
 
 		threading.Thread(target=self._worker, daemon=True).start()
+
+	def on_key_down(self, event):
+		key = event.GetKeyCode()
+		ctrl_down = event.ControlDown()
+		alt_down = event.AltDown()
+		if (ctrl_down and not alt_down and key in (ord('W'), ord('w'))) or (
+			alt_down and not ctrl_down and key == wx.WXK_F4
+		):
+			self.on_cancel(event)
+			return
+		if key == wx.WXK_ESCAPE:
+			# Do not close on Escape key
+			return
+		event.Skip()
 
 	def _worker(self):
 		target_dir = get_target_bin_dir()
